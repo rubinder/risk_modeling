@@ -1,0 +1,87 @@
+dimensions:
+  firm_id: {label: Firm, description: Top of the organisation hierarchy}
+  business_line_id: {label: Business line, description: Business line within the firm}
+  desk_id: {label: Desk, description: Trading desk within the business line}
+  book_id: {label: Book, description: Trading book within the desk}
+  legal_entity: {label: Legal entity, description: Booking legal entity}
+  region: {label: Region, description: Booking region}
+  asset_class: {label: Asset class, description: Asset class of the position}
+  currency: {label: Currency, description: Trade currency}
+  risk_class: {label: Risk class, description: Regulatory risk class}
+  counterparty_id: {label: Counterparty, description: Trade counterparty (not in the vector grain)}
+
+hierarchies:
+  org: [firm_id, business_line_id, desk_id, book_id]
+
+grain: [firm_id, business_line_id, desk_id, book_id, legal_entity, region, asset_class, currency, risk_class]
+
+measures:
+  var_99_1d:
+    label: VaR 99% 1-day
+    description: Historical-simulation value at risk, 99%, 1-day horizon, current window
+    unit: USD
+    class: vector
+    function: var
+    params: {level: 0.99, window: CURRENT, horizon_days: 1}
+    table: risk_metrics
+  var_99_10d:
+    label: VaR 99% 10-day
+    description: Historical-simulation value at risk, 99%, 10-day horizon, current window
+    unit: USD
+    class: vector
+    function: var
+    params: {level: 0.99, window: CURRENT, horizon_days: 10}
+    table: risk_metrics
+  es_975_1d:
+    label: ES 97.5% 1-day
+    description: Expected shortfall, 97.5%, 1-day horizon, current window
+    unit: USD
+    class: vector
+    function: es
+    params: {level: 0.975, window: CURRENT, horizon_days: 1}
+    table: risk_metrics
+  svar_99_1d:
+    label: Stressed VaR 99% 1-day
+    description: Value at risk, 99%, 1-day horizon, stressed window
+    unit: USD
+    class: vector
+    function: var
+    params: {level: 0.99, window: STRESSED, horizon_days: 1}
+    table: risk_metrics
+
+tables:
+  risk_metrics:
+    columns:
+      as_of_date: {type: DATE, role: time}
+      run_id: {type: STRING, role: dimension}
+      spec_hash: {type: STRING, role: dimension}
+      aggregation: {type: STRING, role: dimension}
+      measure: {type: STRING, role: dimension}
+      node_level: {type: STRING, role: dimension}
+      firm_id: {type: STRING, role: dimension}
+      business_line_id: {type: STRING, role: dimension}
+      desk_id: {type: STRING, role: dimension}
+      book_id: {type: STRING, role: dimension}
+      legal_entity: {type: STRING, role: dimension}
+      region: {type: STRING, role: dimension}
+      asset_class: {type: STRING, role: dimension}
+      currency: {type: STRING, role: dimension}
+      risk_class: {type: STRING, role: dimension}
+      scenario: {type: STRING, role: dimension}
+      value: {type: DOUBLE, role: metric}
+  pnl_scenarios:
+    columns:
+      as_of_date: {type: DATE, role: time}
+      run_id: {type: STRING, role: dimension}
+      firm_id: {type: STRING, role: dimension}
+      business_line_id: {type: STRING, role: dimension}
+      desk_id: {type: STRING, role: dimension}
+      book_id: {type: STRING, role: dimension}
+      legal_entity: {type: STRING, role: dimension}
+      region: {type: STRING, role: dimension}
+      asset_class: {type: STRING, role: dimension}
+      currency: {type: STRING, role: dimension}
+      risk_class: {type: STRING, role: dimension}
+      window: {type: STRING, role: dimension}
+      scenario_idx: {type: INT, role: dimension}
+      pnl: {type: DOUBLE, role: metric}
