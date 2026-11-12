@@ -103,3 +103,18 @@ def test_spec_hash_changes_with_reference_data(tmp_path):
     ref.write_text("a,2\n")
     assert spec_hash(specs, [ref]) != h1
     assert spec_hash(specs[:1], [ref]) != spec_hash(specs, [ref])
+
+
+@pytest.mark.parametrize("value", ["D1", "", "[1]", "[NO]", "[[D1]]", "{a: b}"])
+def test_filter_values_must_be_list_of_strings(tmp_path, value):
+    body = f"- {{name: x, measure: var_99_1d, grouping_sets: [[desk_id]], filters: {{desk_id: {value}}}}}"
+    with pytest.raises(SpecError, match="spec 'x': filter 'desk_id' must be a list of strings"):
+        _specs(tmp_path, body)
+
+
+def test_filter_list_of_strings_accepted(tmp_path):
+    body = (
+        "- {name: x, measure: var_99_1d, grouping_sets: [[desk_id]],"
+        " filters: {desk_id: ['D1', 'NO']}}"
+    )
+    assert _specs(tmp_path, body)[0].filters == {"desk_id": ("D1", "NO")}

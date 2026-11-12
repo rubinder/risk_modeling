@@ -72,11 +72,15 @@ def load_specs(path: str | Path | None, model: SemanticModel) -> list[Aggregatio
         if name in seen:
             raise SpecError(f"spec '{name}': duplicate name")
         seen.add(name)
+        filters = r.get("filters") or {}
+        for d, vs in filters.items():
+            if not isinstance(vs, list) or not all(isinstance(v, str) for v in vs):
+                raise SpecError(f"spec '{name}': filter '{d}' must be a list of strings")
         spec = AggregationSpec(
             name=name,
             measure=r["measure"],
             grouping_sets=tuple(tuple(gs) for gs in r.get("grouping_sets") or ()),
-            filters={k: tuple(str(v) for v in vs) for k, vs in (r.get("filters") or {}).items()},
+            filters={d: tuple(vs) for d, vs in filters.items()},
             diversification=bool(r.get("diversification", False)),
         )
         _validate(spec, model)
