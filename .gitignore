@@ -1,4 +1,4 @@
-data/
+/data/
 .venv/
 spark-warehouse/
 __pycache__/
