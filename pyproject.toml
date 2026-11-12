@@ -1,0 +1,37 @@
+[project]
+name = "riskagg"
+version = "0.1.0"
+description = "PySpark risk-aggregation platform: VaR, stress testing, CCAR, FRTB"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.162.5",
+    "httpx>=0.28.1",
+    "numpy>=2.5.4",
+    "pandas<3",
+    "pyarrow>=26.0.1",
+    "pyspark>=4.3.0",
+    "pyyaml>=6.0.3",
+    "typer>=0.29.1",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+riskagg = "riskagg.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.10.12,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["pinot: requires a reachable Pinot controller (skipped otherwise)"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.5",
+]
