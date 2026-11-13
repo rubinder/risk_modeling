@@ -11,7 +11,14 @@ import yaml
 
 from riskagg.semantic.model import SpecError, load_model
 from riskagg.semantic.pinot_schema import pinot_schema, pinot_table_config
-from riskagg.semantic.query import Query, QueryError, SliceNotAvailable, build_query, finish
+from riskagg.semantic.query import (
+    Query,
+    QueryError,
+    SliceNotAvailable,
+    build_drilldown,
+    build_query,
+    finish,
+)
 from riskagg.serving.executors import PandasExecutor, PinotError, PinotExecutor
 
 D = datetime.date(2026, 11, 12)
@@ -62,9 +69,9 @@ def load_model_text():
 
 def test_vector_sql_sums_by_scenario_only(model):
     sql = build_query(model, "var_99_1d", ["desk_id"], {}, D, R).to_pinot_sql()
-    assert "SUM(pnl)" in sql and "scenario_idx" in sql and "PERCENTILE" not in sql.upper()
-    assert "GROUP BY desk_id, scenario_idx" in sql
-    assert "'CURRENT'" in sql and "FROM pnl_scenarios" in sql
+    assert 'SUM("pnl")' in sql and "scenario_idx" in sql and "PERCENTILE" not in sql.upper()
+    assert 'GROUP BY "desk_id", "scenario_idx"' in sql
+    assert """"window" IN ('CURRENT')""" in sql and 'FROM "pnl_scenarios"' in sql
 
 
 def test_var_by_counterparty_refused(model):
@@ -94,13 +101,13 @@ def test_every_query_pins_date_and_run(model, mini_model):
     ]
     for q in queries:
         sql = q.to_pinot_sql()
-        assert "as_of_date IN ('2026-11-12')" in sql and f"run_id IN ('{R}')" in sql
+        assert """"as_of_date" IN ('2026-11-12')""" in sql and f""""run_id" IN ('{R}')""" in sql
 
 
 def test_filters_render_as_quoted_in_lists(model):
     sql = build_query(model, "var_99_1d", [], {"desk_id": ["a", "O'Brien"]}, D, R).to_pinot_sql()
-    assert "desk_id IN ('a', 'O''Brien')" in sql
-    assert "GROUP BY scenario_idx" in sql
+    assert """"desk_id" IN ('a', 'O''Brien')""" in sql
+    assert 'GROUP BY "scenario_idx"' in sql
 
 
 def test_unvalidated_identifier_is_never_interpolated():
@@ -113,8 +120,8 @@ def test_additive_query(mini_model):
     q = build_query(mini_model, "notional", ["desk_id"], {"currency": ["USD"]}, D, R)
     assert q.kind == "additive"
     sql = q.to_pinot_sql()
-    assert sql.startswith('SELECT desk_id, SUM(notional) AS "value" FROM positions WHERE ')
-    assert "currency IN ('USD')" in sql and "GROUP BY desk_id" in sql
+    assert sql.startswith('SELECT "desk_id", SUM("notional") AS "value" FROM "positions" WHERE ')
+    assert """"currency" IN ('USD')""" in sql and 'GROUP BY "desk_id"' in sql
     with pytest.raises(SliceNotAvailable, match="counterparty_id"):
         build_query(mini_model, "notional", ["counterparty_id"], {}, D, R)
     total = build_query(mini_model, "notional", [], {}, D, R).to_pinot_sql()
@@ -126,18 +133,18 @@ def test_additive_extra_fixed_filters_are_general():
         "t", ("a",), ("SUM", "x"), {"measure": ["m1"], "scenario": ["s", "t"]}, "additive", None
     )
     sql = q.to_pinot_sql()
-    assert "measure IN ('m1')" in sql and "scenario IN ('s', 't')" in sql
+    assert """"measure" IN ('m1')""" in sql and """"scenario" IN ('s', 't')""" in sql
 
 
 def test_structured_lookup_matches_any_order(mini_model):
     q = build_query(mini_model, "ccar_loss", ["desk_id", "asset_class"], {"desk_id": ["D1"]}, D, R)
     assert q.kind == "lookup" and q.select_dims == ("desk_id", "asset_class")
     sql = q.to_pinot_sql()
-    assert "FROM risk_metrics" in sql and "measure IN ('ccar_loss')" in sql
-    assert "node_level IN ('desk_id|asset_class')" in sql
+    assert 'FROM "risk_metrics"' in sql and """"measure" IN ('ccar_loss')""" in sql
+    assert """"node_level" IN ('desk_id|asset_class')""" in sql
     assert "SUM" not in sql
     q2 = build_query(mini_model, "ccar_loss", ["asset_class", "desk_id"], {}, D, R)
-    assert "node_level IN ('desk_id|asset_class')" in q2.to_pinot_sql()
+    assert """"node_level" IN ('desk_id|asset_class')""" in q2.to_pinot_sql()
     with pytest.raises(SliceNotAvailable, match="computed_at|precomputed"):
         build_query(mini_model, "ccar_loss", ["region"], {}, D, R)
     with pytest.raises(SliceNotAvailable):
@@ -383,7 +390,7 @@ def test_pinot_executor_refuses_row_limit_hit(model, monkeypatch):
 
 def test_empty_total_is_same_on_both_backends(mini_model, tmp_path):
     q = build_query(mini_model, "notional", [], {}, D, R)
-    assert "COUNT(*) AS row_count" in q.to_pinot_sql()
+    assert 'COUNT(*) AS "row_count"' in q.to_pinot_sql()
 
     def handler(count):
         def respond(request):
@@ -402,3 +409,34 @@ def test_empty_total_is_same_on_both_backends(mini_model, tmp_path):
     pd.DataFrame({"notional": [1.0]}).to_parquet(leaf / "p.parquet")
     pandas_empty = PandasExecutor(tmp_path).execute(q)
     assert pandas_empty.empty and list(pandas_empty.columns) == list(empty.columns)
+
+
+def test_drilldown_sql_and_validation(model):
+    d = build_drilldown(model, "risk_metrics", {"measure": ["var_99_1d"]}, D, R, 50)
+    sql = d.to_pinot_sql()
+    assert sql.startswith('SELECT "as_of_date", "run_id", "spec_hash", "aggregation", "measure"')
+    assert sql.endswith(
+        f"""FROM "risk_metrics" WHERE "as_of_date" IN ('2026-11-12') AND "run_id" IN ('{R}') """
+        """AND "measure" IN ('var_99_1d') LIMIT 50"""
+    )
+    assert d.columns == tuple(model.tables["risk_metrics"]["columns"])
+    with pytest.raises(QueryError, match="unknown table"):
+        build_drilldown(model, "nope", {}, D, R, 10)
+    for bad in ({"value": ["1"]}, {"run_id": ["x"]}, {"as_of_date": ["2026-01-01"]}):
+        with pytest.raises(QueryError, match="cannot be filtered"):
+            build_drilldown(model, "risk_metrics", bad, D, R, 10)
+    with pytest.raises(QueryError, match="list of strings"):
+        build_drilldown(model, "risk_metrics", {"measure": "var_99_1d"}, D, R, 10)
+    with pytest.raises(QueryError, match="limit"):
+        build_drilldown(model, "risk_metrics", {}, D, R, 0)
+
+
+def test_pandas_executor_drilldown(tmp_run):
+    d = build_drilldown(
+        tmp_run.model, "pnl_scenarios", {"desk_id": ["DESK002"], "window": ["STRESSED"]},
+        tmp_run.as_of_date, tmp_run.run_id, 30,
+    )  # fmt: skip
+    rows = PandasExecutor(tmp_run.root).fetch(d)
+    assert len(rows) == 30 and list(rows.columns) == list(d.columns)
+    assert set(rows.desk_id) == {"DESK002"} and set(rows.window) == {"STRESSED"}
+    assert set(rows.run_id) == {tmp_run.run_id}

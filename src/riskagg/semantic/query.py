@@ -23,7 +23,6 @@ VECTOR_TABLE = "pnl_scenarios"  # per-scenario P&L sums, at the grain
 ROW_COUNT = "row_count"  # companion column that tells an empty total from a real one
 MAX_ROWS = 10_000_000  # Pinot truncates to 10 rows unless a LIMIT is given
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_RESERVED = {"window", "value"}  # reserved words in Pinot's SQL dialect: always double-quoted
 _VECTOR_FUNCTIONS = {"var": conventions.var_from_pnl, "es": conventions.es_from_pnl}
 
 
@@ -74,27 +73,47 @@ class Query:
             func, col = self.aggregate
             if func.upper() != "SUM":
                 raise QueryError(f"unsupported aggregate function '{func}'")
-            measure_sql = f"SUM({_ident(col)}) AS {_ident(self.value_column, quote=True)}"
+            measure_sql = f"SUM({_ident(col)}) AS {_ident(self.value_column)}"
         else:
-            measure_sql = _ident("value", quote=True)
+            measure_sql = _ident("value")
         selected = [*(_ident(d) for d in group), measure_sql]
         if self.needs_row_count:
-            selected.append(f"COUNT(*) AS {_ident(ROW_COUNT, quote=True)}")
+            selected.append(f"COUNT(*) AS {_ident(ROW_COUNT)}")
         select = ", ".join(selected)
-        where = " AND ".join(
-            f"{_ident(col)} IN ({', '.join(_literal(v) for v in values)})"
-            for col, values in self.filters.items()
-        )
-        sql = f"SELECT {select} FROM {_ident(self.table)} WHERE {where}"
+        sql = f"SELECT {select} FROM {_ident(self.table)}{_where(self.filters)}"
         if self.aggregate and group:
             sql += " GROUP BY " + ", ".join(_ident(d) for d in group)
         return f"{sql} LIMIT {MAX_ROWS}"
 
 
-def _ident(name: str, quote: bool = False) -> str:
+@dataclass(frozen=True)
+class Drilldown:
+    """Raw rows of one curated table for one run, filtered, at most ``limit`` of them."""
+
+    table: str
+    columns: tuple[str, ...]
+    filters: Mapping[str, Sequence[str]]
+    limit: int
+
+    def to_pinot_sql(self) -> str:
+        select = ", ".join(_ident(c) for c in self.columns)
+        return f"SELECT {select} FROM {_ident(self.table)}{_where(self.filters)} LIMIT {self.limit}"
+
+
+def _where(filters: Mapping[str, Sequence[str]]) -> str:
+    terms = [
+        f"{_ident(col)} IN ({', '.join(_literal(v) for v in values)})"
+        for col, values in filters.items()
+    ]
+    return " WHERE " + " AND ".join(terms) if terms else ""
+
+
+def _ident(name: str) -> str:
+    """Validated, always double-quoted: Pinot's parser reserves words such as ``measure``,
+    ``value`` and ``window``, and quoting every identifier keeps new columns safe."""
     if not _IDENT.fullmatch(name):
         raise QueryError(f"refusing to render invalid identifier {name!r}")
-    return f'"{name}"' if name in _RESERVED else name
+    return f'"{name}"'
 
 
 def _literal(value: object) -> str:
@@ -169,6 +188,31 @@ def build_query(
     _require_valid(m, group_by, filters, "a lookup can only filter on the grouped dimensions")
     fixed = {**pinned, "measure": [m.name], "node_level": ["|".join(level)], **user}
     return Query(m.table, tuple(level), None, fixed, "lookup", m)
+
+
+def build_drilldown(
+    model: SemanticModel,
+    table: str,
+    filters: Mapping[str, Sequence[str]],
+    as_of_date: datetime.date | str,
+    run_id: str,
+    limit: int,
+) -> Drilldown:
+    """Filters may name any STRING column of ``table`` other than the pinned date and run."""
+    if table not in model.tables:
+        raise QueryError(f"unknown table '{table}'; known: {sorted(model.tables)}")
+    columns = model.tables[table]["columns"]
+    filterable = sorted(c for c, s in columns.items() if s["type"] == "STRING" and c != "run_id")
+    for col, values in filters.items():
+        if col not in filterable:
+            raise QueryError(f"table '{table}' cannot be filtered on '{col}'; use {filterable}")
+        if isinstance(values, str) or not values or not all(isinstance(v, str) for v in values):
+            raise QueryError(f"filter '{col}' must be a non-empty list of strings, got {values!r}")
+    if not 1 <= limit < MAX_ROWS:
+        raise QueryError(f"limit must be between 1 and {MAX_ROWS - 1}, got {limit}")
+    date = as_of_date.isoformat() if hasattr(as_of_date, "isoformat") else as_of_date
+    pinned = {"as_of_date": [date], "run_id": [run_id]}
+    return Drilldown(table, tuple(columns), {**pinned, **filters}, limit)
 
 
 def _metric_column(model: SemanticModel, m: Measure) -> str:

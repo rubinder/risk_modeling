@@ -1,0 +1,17 @@
+# Single-container Apache Pinot (ZooKeeper, controller, broker and server in one JVM).
+# `riskagg load-pinot` creates the tables and uploads segments over the controller's REST API.
+services:
+  pinot:
+    image: apachepinot/pinot:1.6.0
+    command: QuickStart -type EMPTY
+    ports:
+      - "9000:9000" # controller (REST API, query console)
+      - "8000:8000" # broker (SQL endpoint /query/sql)
+    environment:
+      JAVA_OPTS: "-Xms1G -Xmx4G -XX:+UseG1GC"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/health && curl -sf http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 20s

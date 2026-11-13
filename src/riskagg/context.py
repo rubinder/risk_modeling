@@ -78,6 +78,21 @@ def official_run(root: str | Path, as_of_date: datetime.date) -> str | None:
     return _read_official(Path(root)).get(as_of_date.isoformat())
 
 
+def official_runs(root: str | Path) -> dict[datetime.date, str]:
+    """Every as-of date that has an official run, mapped to that run's id."""
+    return {datetime.date.fromisoformat(d): r for d, r in _read_official(Path(root)).items()}
+
+
+def run_context(root: str | Path, run_id: str) -> RunContext:
+    """The context of a finished run, rebuilt from its manifest."""
+    path = Path(root) / "runs" / run_id / "manifest.json"
+    if not path.exists():
+        raise FileNotFoundError(f"run '{run_id}' has no manifest at {path}")
+    m = json.loads(path.read_text())
+    as_of = datetime.date.fromisoformat(m["as_of_date"])
+    return RunContext(m["profile"], as_of, m["run_id"], m["spec_hash"], Path(root))
+
+
 def mark_official(ctx: RunContext) -> None:
     """Make ``ctx`` the official run for its as-of date (atomic replace of official.json)."""
     official = _read_official(ctx.root)

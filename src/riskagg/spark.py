@@ -4,6 +4,7 @@ from pyspark.sql import SparkSession
 
 # Non-default settings every riskagg session asks for; the run manifest records their values.
 SESSION_CONF: dict[str, str] = {
+    "spark.driver.memory": "4g",  # local mode: the driver is the executor; 1g OOMs on demo
     "spark.sql.adaptive.enabled": "true",
     "spark.sql.shuffle.partitions": "8",
     "spark.sql.session.timeZone": "UTC",

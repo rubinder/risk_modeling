@@ -1,4 +1,4 @@
-"""Command line: ``riskagg generate`` and ``riskagg run``."""
+"""Command line: ``generate``, ``run``, ``load-pinot``, ``serve`` and ``query``."""
 
 import datetime
 from pathlib import Path
@@ -6,7 +6,14 @@ from pathlib import Path
 import typer
 from pyspark.sql import SparkSession
 
-from riskagg.context import DEFAULT_ROOT, mark_official, new_run, raw_path
+from riskagg.context import (
+    DEFAULT_ROOT,
+    mark_official,
+    new_run,
+    official_runs,
+    raw_path,
+    run_context,
+)
 from riskagg.data.market import make_exposures, make_pnl_vectors, make_sensitivities
 from riskagg.data.org import make_hierarchy, make_risk_factors, make_trades
 from riskagg.data.profiles import PROFILES
@@ -16,7 +23,7 @@ from riskagg.engine.runner import run_all
 from riskagg.engine.spec import load_specs, spec_hash
 from riskagg.paths import CONFIG_DIR, semantic_model_path
 from riskagg.semantic.model import load_model
-from riskagg.serving import curate
+from riskagg.serving import curate, pinot
 from riskagg.spark import get_spark
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -135,3 +142,67 @@ def _firm_var(spark: SparkSession, ctx) -> str:
         .collect()
     )
     return f"{rows[0]['value']:,.2f}" if rows else "n/a"
+
+
+@app.command("load-pinot")
+def load_pinot(
+    as_of: str | None = typer.Option(None, "--as-of", help="Only this date (default: all)"),
+    root: Path = DEFAULT_ROOT,
+    controller: str = typer.Option(pinot.DEFAULT_CONTROLLER, "--controller"),
+) -> None:
+    """Load the official run of every as-of date (or one) into Pinot, replacing that date."""
+    runs = official_runs(root)
+    if as_of is not None:
+        date = _as_of(as_of)
+        if date not in runs:
+            raise typer.BadParameter(f"no official run for {date} under {root}")
+        runs = {date: runs[date]}
+    if not runs:
+        typer.echo(f"no official run under {root}: nothing to load", err=True)
+        raise typer.Exit(1)
+    if not pinot.is_up(controller):
+        typer.echo(f"Pinot controller at {controller} is not reachable", err=True)
+        raise typer.Exit(1)
+    model = load_model()
+    for date, run_id in sorted(runs.items()):
+        counts = pinot.load(run_context(root, run_id), model, controller)
+        loaded = ", ".join(f"{t} {n:,} rows" for t, n in counts.items())
+        typer.echo(f"loaded {date} run {run_id}: {loaded}")
+
+
+@app.command()
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8080,
+    root: Path = DEFAULT_ROOT,
+    broker: str = typer.Option(pinot.DEFAULT_BROKER, "--broker"),
+    controller: str = typer.Option(pinot.DEFAULT_CONTROLLER, "--controller"),
+) -> None:
+    """Serve the HTTP API (catalogue, metrics, drill-down)."""
+    import uvicorn
+
+    from riskagg.serving.api import create_app
+
+    uvicorn.run(create_app(root, None, broker, controller), host=host, port=port)
+
+
+@app.command()
+def query(
+    measure: str,
+    group_by: str = typer.Option("", "--group-by", help="Comma-separated dimensions"),
+    as_of: str | None = typer.Option(None, "--as-of"),
+    top: int = typer.Option(0, "--top", help="Show only the N largest values"),
+    root: Path = DEFAULT_ROOT,
+    base_url: str | None = typer.Option(None, "--url", help="API base URL (default: in-process)"),
+) -> None:
+    """Answer one metric query through the client and say which source answered."""
+    from riskagg.serving.client import RiskClient
+
+    client = RiskClient(base_url=base_url, root=root)
+    dims = [d for d in group_by.split(",") if d]
+    df = client.metric(measure, dims, as_of=as_of)
+    if top:
+        df = df.sort_values("value", ascending=False).head(top)
+    label = f"{measure} by {', '.join(dims)}" if dims else measure
+    typer.echo(f"{label} for {client.as_of_date} run {client.run_id} (source: {client.source})")
+    typer.echo(df.to_string(index=False, float_format=lambda v: f"{v:,.2f}"))

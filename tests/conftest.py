@@ -65,3 +65,24 @@ def tmp_run(spark, tmp_path_factory):
     run_id = official_run(root, as_of)
     assert run_id is not None
     return TinyRun(root, as_of, run_id, load_model())
+
+
+@pytest.fixture(autouse=True)
+def _skip_pinot_tests_without_pinot(request):
+    """``@pytest.mark.pinot`` tests skip when the Pinot controller is unreachable."""
+    if request.node.get_closest_marker("pinot") is None:
+        return
+    from riskagg.serving import pinot
+
+    if not pinot.is_up(pinot.DEFAULT_CONTROLLER):
+        pytest.skip(f"Pinot controller not reachable at {pinot.DEFAULT_CONTROLLER}")
+
+
+@pytest.fixture(scope="session")
+def pinot_controller():
+    """The controller URL; skips when unreachable (for fixtures broader than one test)."""
+    from riskagg.serving import pinot
+
+    if not pinot.is_up(pinot.DEFAULT_CONTROLLER):
+        pytest.skip(f"Pinot controller not reachable at {pinot.DEFAULT_CONTROLLER}")
+    return pinot.DEFAULT_CONTROLLER
