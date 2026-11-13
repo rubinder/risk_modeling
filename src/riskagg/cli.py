@@ -24,6 +24,7 @@ from riskagg.engine.inputs import RunInputs
 from riskagg.engine.runner import run_all
 from riskagg.engine.spec import load_specs, spec_hash
 from riskagg.measures.frtb_drc import sa_detail
+from riskagg.measures.frtb_ima import ima_detail
 from riskagg.measures.stress import load_scenarios, shock_table
 from riskagg.paths import CONFIG_DIR, semantic_model_path
 from riskagg.semantic.model import load_model
@@ -116,6 +117,8 @@ def run(
         pnl_vectors = spark.read.parquet(str(ctx.raw("pnl_vectors")))
         grain = build_reporting_grain(pnl_vectors, hierarchy, p.n_scenarios).cache()
         inputs = RunInputs(
+            grain=grain,
+            n_scenarios=p.n_scenarios,
             sensitivities=spark.read.parquet(str(ctx.raw("sensitivities"))),
             trades=spark.read.parquet(str(ctx.raw("trades"))),
             hierarchy=hierarchy,
@@ -131,6 +134,8 @@ def run(
         curate.write_stress_results(stress_grain, ctx)
         levels = [list(c) for c in model.measure("frtb_sa_charge").computed_at]
         curate.write_frtb_sa_detail(sa_detail(inputs, levels), ctx)
+        ima_levels = [list(c) for c in model.measure("frtb_imcc").computed_at]
+        curate.write_frtb_ima_detail(ima_detail(inputs, ima_levels), ctx)
         audit.write_manifest(
             ctx,
             {

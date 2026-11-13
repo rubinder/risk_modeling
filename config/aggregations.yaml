@@ -50,3 +50,24 @@
     - [firm_id, business_line_id, desk_id]
   filters: {}
   diversification: false
+- name: frtb_imcc_by_org
+  measure: frtb_imcc
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, business_line_id, desk_id]
+  filters: {}
+  diversification: false
+- name: frtb_imcc_unconstrained_by_org
+  measure: frtb_imcc_unconstrained
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, business_line_id, desk_id]
+  filters: {}
+  diversification: false
+- name: frtb_imcc_constrained_sum_by_org
+  measure: frtb_imcc_constrained_sum
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, business_line_id, desk_id]
+  filters: {}
+  diversification: false

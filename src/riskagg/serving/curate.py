@@ -1,4 +1,5 @@
-"""Curated outputs: ``risk_metrics``, ``pnl_scenarios``, ``stress_results`` and ``frtb_sa_detail``, partitioned by as-of date and run.
+"""Curated outputs: ``risk_metrics``, ``pnl_scenarios``, ``stress_results``, ``frtb_sa_detail``
+and ``frtb_ima_detail``, partitioned by as-of date and run.
 
 All are written with ``as_of_date`` and ``run_id`` as partition directories, and dynamic
 partition overwrite, so a re-run never touches another run's partition. Reading the table
@@ -61,3 +62,14 @@ def write_frtb_sa_detail(detail: DataFrame, ctx: RunContext) -> None:
         c for c in load_model().tables["frtb_sa_detail"]["columns"] if c not in PARTITION_COLS
     ]
     _write(detail.select(*columns), ctx, "frtb_sa_detail")
+
+
+def write_frtb_ima_detail(detail: DataFrame, ctx: RunContext) -> None:
+    """FRTB IMA ES components per node and risk class (``*`` = all classes together).
+
+    Not additive: expected shortfalls must never be summed. Columns of ``frtb_ima_detail``.
+    """
+    columns = [
+        c for c in load_model().tables["frtb_ima_detail"]["columns"] if c not in PARTITION_COLS
+    ]
+    _write(detail.select(*columns), ctx, "frtb_ima_detail")

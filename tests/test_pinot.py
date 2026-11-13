@@ -29,6 +29,7 @@ PREFIX = "riskagg_test_"
 METRICS, VECTORS = PREFIX + "risk_metrics", PREFIX + "pnl_scenarios"
 STRESS = PREFIX + "stress_results"
 FRTB_DETAIL = PREFIX + "frtb_sa_detail"
+IMA_DETAIL = PREFIX + "frtb_ima_detail"
 
 
 def _count(table: str) -> int:
@@ -67,7 +68,10 @@ def _parquet_rows(served, table: str) -> int:
 @pytest.fixture(scope="module")
 def served(tmp_run, pinot_controller, tmp_path_factory):
     model = prefixed(tmp_run.model, PREFIX)
-    assert set(model.tables) == {METRICS, VECTORS, STRESS, FRTB_DETAIL} and model.vector_table == VECTORS
+    assert (
+        set(model.tables) == {METRICS, VECTORS, STRESS, FRTB_DETAIL, IMA_DETAIL}
+        and model.vector_table == VECTORS
+    )
     root = tmp_path_factory.mktemp("pinot_root")
     (root / "curated").mkdir()
     for table in tmp_run.model.tables:
@@ -107,7 +111,9 @@ def test_demo_tables_are_not_touched(served, pinot_controller):
     def snapshot():
         listed = httpx.get(f"{pinot_controller}/tables", timeout=10).json()["tables"]
         out = {}
-        for table in ("risk_metrics", "pnl_scenarios", "stress_results", "frtb_sa_detail"):
+        for table in (
+            "risk_metrics", "pnl_scenarios", "stress_results", "frtb_sa_detail", "frtb_ima_detail"
+        ):  # fmt: skip
             if table in listed:
                 segs = httpx.get(f"{pinot_controller}/segments/{table}", timeout=10).json()
                 out[table] = (sorted(s for e in segs for s in e.get("OFFLINE", [])), _count(table))

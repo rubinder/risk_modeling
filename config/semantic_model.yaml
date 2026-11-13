@@ -119,6 +119,43 @@ measures:
       - [firm_id]
       - [firm_id, business_line_id, desk_id]
 
+  frtb_imcc:
+    label: FRTB IMA capital for modellable risk (IMCC)
+    description: >-
+      Internal models approach capital for modellable risk factors (MAR33.15): 0.5 x the
+      unconstrained liquidity-adjusted, stress-calibrated 97.5% ES plus 0.5 x the sum of the
+      per-risk-class ES. Excludes NMRF (SES), the IMA default risk charge, the multiplier and the
+      60-day average. A positive number is capital. Recomputed from each node's own vectors,
+      never a sum of the nodes below: only looked up.
+    unit: USD
+    class: structured
+    table: risk_metrics
+    computed_at:
+      - [firm_id]
+      - [firm_id, business_line_id, desk_id]
+  frtb_imcc_unconstrained:
+    label: FRTB IMCC(C), unconstrained
+    description: >-
+      Liquidity-adjusted, stress-calibrated 97.5% ES of all risk classes together, with
+      correlations across risk classes as observed (MAR33.13, MAR33.15). Only looked up.
+    unit: USD
+    class: structured
+    table: risk_metrics
+    computed_at:
+      - [firm_id]
+      - [firm_id, business_line_id, desk_id]
+  frtb_imcc_constrained_sum:
+    label: FRTB sum of IMCC(C_i), constrained
+    description: >-
+      Sum over risk classes of each risk class's liquidity-adjusted, stress-calibrated 97.5% ES
+      computed alone (MAR33.14): no diversification across risk classes. Only looked up.
+    unit: USD
+    class: structured
+    table: risk_metrics
+    computed_at:
+      - [firm_id]
+      - [firm_id, business_line_id, desk_id]
+
 tables:
   risk_metrics:
     columns:
@@ -187,3 +224,19 @@ tables:
       corr_scenario: {type: STRING, role: dimension}
       k_b: {type: DOUBLE, role: metric}
       s_b: {type: DOUBLE, role: metric}
+  frtb_ima_detail:
+    # Not additive: every column is an expected shortfall (or a stress-scaled one) of a node and
+    # risk-class scope (risk_class * = all classes together); none may be summed over nodes or
+    # risk classes. No measure is served from this table, so no Pinot star-tree is built.
+    columns:
+      as_of_date: {type: DATE, role: time}
+      run_id: {type: STRING, role: dimension}
+      node_level: {type: STRING, role: dimension}
+      firm_id: {type: STRING, role: dimension}
+      business_line_id: {type: STRING, role: dimension}
+      desk_id: {type: STRING, role: dimension}
+      risk_class: {type: STRING, role: dimension}
+      es_fc: {type: DOUBLE, role: metric}
+      es_rc: {type: DOUBLE, role: metric}
+      es_rs: {type: DOUBLE, role: metric}
+      es: {type: DOUBLE, role: metric}

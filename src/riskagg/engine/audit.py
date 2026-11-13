@@ -17,6 +17,7 @@ from pyspark.sql import functions as F
 from riskagg.context import RunContext
 from riskagg.conventions import es_from_pnl, var_from_pnl
 from riskagg.engine.vectors import GRAIN_DIMS
+from riskagg.measures import frtb_ima
 from riskagg.measures.stress import load_scenarios
 from riskagg.paths import REPO_ROOT
 from riskagg.semantic.model import load_model
@@ -302,12 +303,89 @@ def check_frtb_sa_is_sum_of_components(ctx: RunContext, spark: SparkSession) -> 
     )
 
 
+def _firm_ima_from_raw(ctx: RunContext, spark: SparkSession) -> dict[str, float] | None:
+    """Firm IMCC from the raw trade vectors, summed per scenario in Spark and finished in NumPy.
+
+    Shares only the pure formulas of ``frtb_ima`` (cascade, stressed ratio) with the run; the
+    grouping into sets and horizons is redone here from the raw columns. ``None`` when the raw
+    data has no stressed window (no IMCC is reported then).
+    """
+    raw = spark.read.parquet(str(ctx.raw("pnl_vectors")))
+    keys = ["risk_class", "window", "in_reduced_set", "liquidity_horizon"]
+    rows = (
+        raw.select(*keys, F.posexplode("pnl").alias("i", "pnl"))
+        .groupBy(*keys, "i")
+        .agg(F.sum("pnl").alias("pnl"))
+        .collect()
+    )
+    n = 1 + max((r["i"] for r in rows), default=-1)
+    parts: dict[tuple, np.ndarray] = {}
+    for r in rows:
+        key = tuple(r[k] for k in keys)
+        parts.setdefault(key, np.zeros(n))[r["i"]] = r["pnl"]
+    if not any(k[1] == frtb_ima.STRESSED for k in parts):
+        return None
+    ten_day = math.sqrt(frtb_ima.BASE_HORIZON)
+    scopes = sorted({k[0] for k in parts}) + [frtb_ima.ALL_CLASSES]
+    es: dict[str, float] = {}
+    for scope in scopes:
+        by_set = {}
+        for name, (window, reduced_only) in frtb_ima.ES_SETS.items():
+            by_lh = {}
+            for lh in frtb_ima.LIQUIDITY_HORIZONS:
+                members = [
+                    v for (rc, w, red, h), v in parts.items()
+                    if scope in (rc, frtb_ima.ALL_CLASSES) and w == window
+                    and (red or not reduced_only) and h >= lh
+                ]  # fmt: skip
+                if members:
+                    by_lh[lh] = es_from_pnl(sum(members), frtb_ima.LEVEL) * ten_day
+            by_set[name] = frtb_ima.lh_adjusted_es(by_lh)
+        es[scope] = frtb_ima.scaled_es(by_set["rs"], by_set["fc"], by_set["rc"])
+    unconstrained = es.pop(frtb_ima.ALL_CLASSES)
+    constrained = sum(es.values())
+    return {
+        "frtb_imcc_unconstrained": unconstrained,
+        "frtb_imcc_constrained_sum": constrained,
+        "frtb_imcc": frtb_ima.RHO * unconstrained + (1 - frtb_ima.RHO) * constrained,
+    }
+
+
+def check_frtb_imcc_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
+    """Firm ``frtb_imcc`` (and its two parts) in ``risk_metrics`` equal a recomputation from raw.
+
+    SIMPLIFICATION: assumes the firm rows come from unfiltered specifications.
+    """
+    name = "frtb_imcc_firm_matches_raw_vectors"
+    stored = {
+        r["measure"]: r["value"]
+        for r in spark.read.parquet(str(ctx.curated("risk_metrics")))
+        .where(F.col("measure").isin(*frtb_ima.IMA_MEASURES) & (F.col("node_level") == "firm_id"))
+        .collect()
+    }
+    expected = _firm_ima_from_raw(ctx, spark)
+    if expected is None:
+        return Check(name, not stored, f"no stressed window in raw data; {len(stored)} firm rows")
+    problems = []
+    for measure, exp in expected.items():
+        got = stored.get(measure)
+        if got is None:
+            problems.append(f"{measure}: no firm row")
+        elif abs(got - exp) > TOLERANCE * max(1.0, abs(exp)):
+            problems.append(f"{measure}: stored {got} vs raw {exp}")
+    detail = f"{len(expected)} firm IMA measures recomputed" + (
+        f"; {'; '.join(problems)}" if problems else ""
+    )
+    return Check(name, not problems, detail)
+
+
 CHECKS: list[CheckFn] = [
     check_firm_vector_is_sum_of_book_vectors,
     check_firm_var_from_pnl_scenarios,
     check_no_duplicate_nodes,
     check_stress_firm_pnl_is_sum_of_trades,
     check_frtb_sa_is_sum_of_components,
+    check_frtb_imcc_from_raw,
 ]
 
 

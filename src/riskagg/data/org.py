@@ -24,6 +24,8 @@ GIRR_DELTA_LH = {"specified": 10, "unspecified": 20}
 GIRR_VEGA_LH = 60  # interest rate volatility
 # Buckets 1, 5, 8 (large market cap) and 12 (large-cap advanced-economy indices) are all large
 # cap (MAR21.72): equity price 10, equity price (large cap) volatility 20.
+# SIMPLIFICATION: bucket 12 (an index) takes the large-cap horizon directly instead of the
+# weighted average of its constituents' horizons (MAR33.12 FAQ5).
 EQ_DELTA_LH = {"1": 10, "5": 10, "8": 10, "12": 10}
 EQ_VEGA_LH = {"1": 20, "5": 20, "8": 20, "12": 20}
 # FX specified currency pairs (MAR33.12 footnote 1; every USD pair generated here is listed,
@@ -37,6 +39,8 @@ FX_DELTA_LH = {"specified": 10, "unspecified": 20}
 FX_VEGA_LH = 40
 REGIONS = ("EMEA", "AMER", "APAC")
 N_COUNTERPARTIES = 50
+# SIMPLIFICATION: each risk factor joins the IMA reduced set (MAR33.5) at random with this
+# probability, instead of being chosen for its data history and explanatory power.
 REDUCED_SET_SHARE = 0.8
 
 

@@ -13,7 +13,7 @@ from pyspark.sql import DataFrame
 from riskagg.engine.inputs import RunInputs
 from riskagg.engine.spec import AggregationSpec
 from riskagg.engine.vectors import METRIC_COLUMNS, aggregate_vectors, node_level, unique_sets
-from riskagg.measures import frtb_drc, stress, var
+from riskagg.measures import frtb_drc, frtb_ima, stress, var
 from riskagg.semantic.model import SemanticModel, SpecError
 
 MeasureFn = Callable[[AggregationSpec, SemanticModel, RunInputs], DataFrame]
@@ -23,6 +23,7 @@ MeasureFn = Callable[[AggregationSpec, SemanticModel, RunInputs], DataFrame]
 MEASURE_REGISTRY: dict[str, MeasureFn] = {
     "worst_stress_loss": stress.worst_stress_loss,
     **frtb_drc.FRTB_MEASURES,
+    **frtb_ima.FRTB_IMA_MEASURES,
 }
 
 FilterKey = tuple[tuple[str, tuple[str, ...]], ...]
@@ -84,10 +85,10 @@ def run_all(
     """All metrics of ``specs`` in ``METRIC_COLUMNS``.
 
     Vector specs are grouped by filters; each group shares one ``node_vectors`` pass. A
-    non-vector spec runs its ``MEASURE_REGISTRY`` entry with ``inputs`` (whose ``grain`` is set
-    to ``grain``), and an unregistered one is an error.
+    non-vector spec runs its ``MEASURE_REGISTRY`` entry with ``inputs`` (whose ``grain`` and
+    ``n_scenarios`` are set from the arguments), and an unregistered one is an error.
     """
-    inputs = replace(inputs or RunInputs(), grain=grain)
+    inputs = replace(inputs or RunInputs(), grain=grain, n_scenarios=n_scenarios)
     groups: dict[FilterKey, list[AggregationSpec]] = {}
     others: list[AggregationSpec] = []
     for spec in specs:

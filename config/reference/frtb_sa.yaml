@@ -1,6 +1,8 @@
 # FRTB standardised approach, sensitivities-based method: risk weights and correlations.
-# Source: Basel Framework MAR21 (version effective 1 January 2023, incorporating the FAQs of
-# 5 July 2024), checked against the BIS text. Paragraph numbers are given beside each group.
+# Source: Basel Framework MAR21 (version effective 1 January 2023, last updated 23 March 2026,
+# incorporating the FAQs of 5 July 2024 and 23 March 2026), checked against the BIS text. The
+# 23 March 2026 FAQs concern credit spread risk and change none of the values below.
+# Paragraph numbers are given beside each group.
 # Risk weights are decimals (1.7% -> 0.017; 30% -> 0.30). Only the risk classes the platform
 # models are carried: GIRR, equity (EQ) and FX.
 
