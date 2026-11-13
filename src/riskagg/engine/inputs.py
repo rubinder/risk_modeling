@@ -14,6 +14,11 @@ class RunInputs:
     ``shocks`` table (scenario, risk_factor_id, shock). ``stress_grain`` builds the stress P&L
     at the reporting-grain dimensions once and returns the same lazy frame afterwards, so the
     run can cache it, write it and derive the worst-scenario figures from it.
+
+    CCAR needs ``banking_book``, ``macro_scenarios`` and ``capital_start``, and takes its
+    trading loss from ``stress_grain``. ``ccar_projection`` builds the projection once and
+    returns the same lazy frame afterwards (the run caches and writes it); ``ccar_summary``
+    derives the capital measures from it.
     """
 
     grain: DataFrame | None = None
@@ -22,8 +27,13 @@ class RunInputs:
     hierarchy: DataFrame | None = None
     shocks: DataFrame | None = None
     default_risk_positions: DataFrame | None = None
+    banking_book: DataFrame | None = None
+    macro_scenarios: DataFrame | None = None
+    capital_start: DataFrame | None = None
     n_scenarios: int | None = None
     _stress_grain: DataFrame | None = field(default=None, repr=False)
+    # Shared through ``dataclasses.replace`` copies, like the FRTB levels below.
+    _ccar: dict = field(default_factory=dict, repr=False)
     # FRTB levels by node columns. ``run_all`` copies the inputs with ``dataclasses.replace``,
     # which passes this same dict on, so a level built through a copy is visible to the original.
     _frtb_levels: dict = field(default_factory=dict, repr=False)
@@ -69,3 +79,31 @@ class RunInputs:
             pnl = stress_pnl(self.sensitivities, self.shocks)
             self._stress_grain = stress_by_grain(pnl, self.trades, self.hierarchy)
         return self._stress_grain
+
+    def ccar_projection(self) -> DataFrame:
+        if "projection" not in self._ccar:
+            from riskagg.measures import ccar
+            from riskagg.measures.stress import load_scenarios
+
+            missing = [
+                n for n in ("banking_book", "macro_scenarios", "capital_start")
+                if getattr(self, n) is None
+            ]  # fmt: skip
+            if missing:
+                raise ValueError(f"CCAR measures need run inputs {missing}, which are not set")
+            gms = ccar.gms_loss_by_entity_bl(
+                self.stress_grain(), ccar.global_market_shock(load_scenarios())
+            )
+            self._ccar["projection"] = ccar.project(
+                self.banking_book, self.macro_scenarios, self.capital_start, gms, ccar.load_params()
+            )
+        return self._ccar["projection"]
+
+    def ccar_summary(self) -> DataFrame:
+        if "summary" not in self._ccar:
+            from riskagg.measures import ccar
+
+            self._ccar["summary"] = ccar.summary(
+                self.ccar_projection(), self.capital_start, ccar.load_params()
+            )
+        return self._ccar["summary"]

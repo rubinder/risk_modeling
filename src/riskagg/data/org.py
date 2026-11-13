@@ -37,6 +37,7 @@ FX_SPECIFIED_PAIRS = (
 )  # fmt: skip
 FX_DELTA_LH = {"specified": 10, "unspecified": 20}
 FX_VEGA_LH = 40
+FIRM_ID = "FIRM"
 REGIONS = ("EMEA", "AMER", "APAC")
 N_COUNTERPARTIES = 50
 # SIMPLIFICATION: each risk factor joins the IMA reduced set (MAR33.5) at random with this
@@ -84,7 +85,7 @@ def make_hierarchy(spark: SparkSession, p: Profile) -> DataFrame:
         F.format_string("Desk %d", desk + 1).alias("desk_name"),
         F.format_string("BL%02d", bl + 1).alias("business_line_id"),
         F.format_string("Business Line %d", bl + 1).alias("business_line_name"),
-        F.lit("FIRM").alias("firm_id"),
+        F.lit(FIRM_ID).alias("firm_id"),
         F.format_string("LE%02d", (i % n_legal_entities) + 1).alias("legal_entity"),
         _pick(REGIONS, i % len(REGIONS)).alias("region"),
     )

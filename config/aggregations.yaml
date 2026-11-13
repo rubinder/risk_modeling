@@ -71,3 +71,24 @@
     - [firm_id, business_line_id, desk_id]
   filters: {}
   diversification: false
+- name: ccar_start_cet1_ratio_by_entity
+  measure: ccar_start_cet1_ratio
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, legal_entity]
+  filters: {}
+  diversification: false
+- name: ccar_min_cet1_ratio_by_entity
+  measure: ccar_min_cet1_ratio
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, legal_entity]
+  filters: {}
+  diversification: false
+- name: ccar_scb_by_entity
+  measure: ccar_scb
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, legal_entity]
+  filters: {}
+  diversification: false

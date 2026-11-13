@@ -30,6 +30,7 @@ METRICS, VECTORS = PREFIX + "risk_metrics", PREFIX + "pnl_scenarios"
 STRESS = PREFIX + "stress_results"
 FRTB_DETAIL = PREFIX + "frtb_sa_detail"
 IMA_DETAIL = PREFIX + "frtb_ima_detail"
+CCAR = PREFIX + "ccar_projection"
 
 
 def _count(table: str) -> int:
@@ -69,7 +70,7 @@ def _parquet_rows(served, table: str) -> int:
 def served(tmp_run, pinot_controller, tmp_path_factory):
     model = prefixed(tmp_run.model, PREFIX)
     assert (
-        set(model.tables) == {METRICS, VECTORS, STRESS, FRTB_DETAIL, IMA_DETAIL}
+        set(model.tables) == {METRICS, VECTORS, STRESS, FRTB_DETAIL, IMA_DETAIL, CCAR}
         and model.vector_table == VECTORS
     )
     root = tmp_path_factory.mktemp("pinot_root")
@@ -112,7 +113,8 @@ def test_demo_tables_are_not_touched(served, pinot_controller):
         listed = httpx.get(f"{pinot_controller}/tables", timeout=10).json()["tables"]
         out = {}
         for table in (
-            "risk_metrics", "pnl_scenarios", "stress_results", "frtb_sa_detail", "frtb_ima_detail"
+            "risk_metrics", "pnl_scenarios", "stress_results", "frtb_sa_detail", "frtb_ima_detail",
+            "ccar_projection",
         ):  # fmt: skip
             if table in listed:
                 segs = httpx.get(f"{pinot_controller}/segments/{table}", timeout=10).json()
@@ -188,6 +190,17 @@ def test_drilldown_on_pinot(served):
     pin = PinotExecutor(BROKER).fetch(d)
     par = PandasExecutor(served.root).fetch(d)
     _assert_same(pin, par, keys)
+
+
+@pytest.mark.pinot
+def test_ccar_drilldown_keeps_nulls_on_pinot(served):
+    """Business lines have no capital: Pinot returns null, as Parquet does, never 0."""
+    d = build_drilldown(served.model, CCAR, {}, served.as_of_date, served.run_id, 1000)
+    pin = PinotExecutor(BROKER).fetch(d)
+    par = PandasExecutor(served.root).fetch(d)
+    _assert_same(pin, par, ["scenario", "quarter", "node_level", "node_id"])
+    lines = pin[pin["node_level"] == "BUSINESS_LINE"]
+    assert len(lines) > 0 and lines[["cet1", "rwa", "cet1_ratio", "dividends"]].isna().all().all()
 
 
 @pytest.mark.pinot

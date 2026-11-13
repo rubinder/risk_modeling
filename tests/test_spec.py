@@ -34,6 +34,9 @@ def test_shipped_config_loads():
         "frtb_imcc_by_org",
         "frtb_imcc_unconstrained_by_org",
         "frtb_imcc_constrained_sum_by_org",
+        "ccar_start_cet1_ratio_by_entity",
+        "ccar_min_cet1_ratio_by_entity",
+        "ccar_scb_by_entity",
     ]
     assert model.grain == (
         "firm_id", "business_line_id", "desk_id", "book_id", "legal_entity",

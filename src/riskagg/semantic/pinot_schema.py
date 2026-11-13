@@ -23,7 +23,11 @@ def _columns(model: SemanticModel, table: str) -> dict[str, dict[str, Any]]:
 
 
 def pinot_schema(model: SemanticModel, table: str) -> dict[str, Any]:
-    """dimension -> dimensionFieldSpecs, metric -> metricFieldSpecs, time -> dateTimeFieldSpecs."""
+    """dimension -> dimensionFieldSpecs, metric -> metricFieldSpecs, time -> dateTimeFieldSpecs.
+
+    A table with a column marked ``nullable`` in the model gets column-based null handling, so
+    Pinot stores a null as null instead of the type's default (0 for a metric).
+    """
     schema: dict[str, Any] = {
         "schemaName": table,
         "dimensionFieldSpecs": [],
@@ -45,7 +49,13 @@ def pinot_schema(model: SemanticModel, table: str) -> dict[str, Any]:
             # as_of_date is stored as a 'YYYY-MM-DD' string
             spec |= {"format": TIME_FORMAT, "granularity": "1:DAYS"}
         schema[key].append(spec)
+    if has_nullable_columns(model, table):
+        schema["enableColumnBasedNullHandling"] = True
     return schema
+
+
+def has_nullable_columns(model: SemanticModel, table: str) -> bool:
+    return any(c.get("nullable") for c in _columns(model, table).values())
 
 
 def _star_tree(model: SemanticModel, table: str) -> dict[str, Any] | None:

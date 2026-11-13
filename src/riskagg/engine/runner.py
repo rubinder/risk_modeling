@@ -13,7 +13,7 @@ from pyspark.sql import DataFrame
 from riskagg.engine.inputs import RunInputs
 from riskagg.engine.spec import AggregationSpec
 from riskagg.engine.vectors import METRIC_COLUMNS, aggregate_vectors, node_level, unique_sets
-from riskagg.measures import frtb_drc, frtb_ima, stress, var
+from riskagg.measures import ccar, frtb_drc, frtb_ima, stress, var
 from riskagg.semantic.model import SemanticModel, SpecError
 
 MeasureFn = Callable[[AggregationSpec, SemanticModel, RunInputs], DataFrame]
@@ -24,6 +24,7 @@ MEASURE_REGISTRY: dict[str, MeasureFn] = {
     "worst_stress_loss": stress.worst_stress_loss,
     **frtb_drc.FRTB_MEASURES,
     **frtb_ima.FRTB_IMA_MEASURES,
+    **ccar.CCAR_MEASURES,
 }
 
 FilterKey = tuple[tuple[str, tuple[str, ...]], ...]

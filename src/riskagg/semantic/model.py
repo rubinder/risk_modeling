@@ -30,6 +30,9 @@ class Measure:
     computed_at: tuple[tuple[str, ...], ...] = ()
     # A structured measure whose stored rows name a scenario; lookups return it beside the value.
     carries_scenario: bool = False
+    # Dimensions the measure is never sliced by because its quantity (capital) is not allocated
+    # to them; a query naming one is refused with that reason.
+    not_allocated_to: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,20 @@ def load_model(path: str | Path | None = None) -> SemanticModel:
             raise SpecError(f"measure '{name}': computed_at only applies to structured measures")
         if m.get("carries_scenario") and cls != "structured":
             raise SpecError(f"measure '{name}': carries_scenario only applies to structured measures")
+        not_allocated = tuple(m.get("not_allocated_to") or ())
+        for d in not_allocated:
+            if d not in dimensions:
+                raise SpecError(f"measure '{name}': not_allocated_to: unknown dimension '{d}'")
+        if not_allocated and cls != "structured":
+            raise SpecError(
+                f"measure '{name}': not_allocated_to only applies to structured measures"
+            )
+        for level in computed_at:
+            if set(level) & set(not_allocated):
+                raise SpecError(
+                    f"measure '{name}': computed_at {list(level)} uses a dimension it is "
+                    "not allocated to"
+                )
         table = m.get("table")
         if table not in tables:
             raise SpecError(f"measure '{name}': unknown table '{table}'")
@@ -94,6 +111,7 @@ def load_model(path: str | Path | None = None) -> SemanticModel:
             dimensions=dims,
             computed_at=computed_at,
             carries_scenario=bool(m.get("carries_scenario", False)),
+            not_allocated_to=not_allocated,
         )
     vector_table = raw.get("vector_table", DEFAULT_VECTOR_TABLE)
     if any(m.measure_class == "vector" for m in measures.values()) and vector_table not in tables:

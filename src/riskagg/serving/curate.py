@@ -1,5 +1,5 @@
-"""Curated outputs: ``risk_metrics``, ``pnl_scenarios``, ``stress_results``, ``frtb_sa_detail``
-and ``frtb_ima_detail``, partitioned by as-of date and run.
+"""Curated outputs: ``risk_metrics``, ``pnl_scenarios``, ``stress_results``, ``frtb_sa_detail``,
+``frtb_ima_detail`` and ``ccar_projection``, partitioned by as-of date and run.
 
 All are written with ``as_of_date`` and ``run_id`` as partition directories, and dynamic
 partition overwrite, so a re-run never touches another run's partition. Reading the table
@@ -73,3 +73,15 @@ def write_frtb_ima_detail(detail: DataFrame, ctx: RunContext) -> None:
         c for c in load_model().tables["frtb_ima_detail"]["columns"] if c not in PARTITION_COLS
     ]
     _write(detail.select(*columns), ctx, "frtb_ima_detail")
+
+
+def write_ccar_projection(projection: DataFrame, ctx: RunContext) -> None:
+    """The CCAR path per scenario, quarter and node (columns of the model's ``ccar_projection``).
+
+    Rows of different ``node_level`` must never be summed together; capital columns are null
+    for business lines.
+    """
+    columns = [
+        c for c in load_model().tables["ccar_projection"]["columns"] if c not in PARTITION_COLS
+    ]
+    _write(projection.select(*columns), ctx, "ccar_projection")

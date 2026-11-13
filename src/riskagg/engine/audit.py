@@ -17,7 +17,7 @@ from pyspark.sql import functions as F
 from riskagg.context import RunContext
 from riskagg.conventions import es_from_pnl, var_from_pnl
 from riskagg.engine.vectors import GRAIN_DIMS
-from riskagg.measures import frtb_ima
+from riskagg.measures import ccar, frtb_ima
 from riskagg.measures.stress import load_scenarios
 from riskagg.paths import REPO_ROOT
 from riskagg.semantic.model import load_model
@@ -379,6 +379,163 @@ def check_frtb_imcc_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
     return Check(name, not problems, detail)
 
 
+def _ccar_from_raw(ctx: RunContext, spark: SparkSession) -> tuple[dict, dict]:
+    """The CCAR projection and capital measures rebuilt in plain Python from files on disk.
+
+    Inputs: the raw banking book, macro scenarios and starting capital, and the curated
+    ``stress_results`` (already reconciled to the raw sensitivities by its own check) for the
+    global-market-shock loss. Shares only the parameters file with the run, not its code.
+    Returns ``(rows, metrics)``: ``rows[(scenario, quarter, node_level, node_id)]`` is a dict of
+    projection columns, ``metrics[(measure, node_level, node_id, scenario)]`` a value.
+    """
+    params = ccar.load_params()
+    book = [r.asDict() for r in spark.read.parquet(str(ctx.raw("banking_book"))).collect()]
+    capital = {
+        r["legal_entity"]: r.asDict()
+        for r in spark.read.parquet(str(ctx.raw("capital_start"))).collect()
+    }
+    macro = {
+        (r["scenario"], r["quarter"]): (r["unemployment_rate"], r["gdp_growth"])
+        for r in spark.read.parquet(str(ctx.raw("macro_scenarios"))).collect()
+    }
+    gms = ccar.global_market_shock(load_scenarios())
+    trading = {
+        (r["legal_entity"], r["business_line_id"]): -r["pnl"]
+        for r in spark.read.parquet(str(ctx.curated("stress_results")))
+        .where(F.col("scenario") == gms)
+        .groupBy("legal_entity", "business_line_id")
+        .agg(F.sum("pnl").alias("pnl"))
+        .collect()
+    }
+    flows = ("ppnr", "credit_loss", "trading_loss", "net_income")
+    pairs = sorted({(b["legal_entity"], b["business_line_id"]) for b in book} | set(trading))
+    rows: dict[tuple, dict] = {}
+
+    def add(key: tuple, values: dict) -> None:
+        acc = rows.setdefault(key, dict.fromkeys(flows, 0.0))
+        for c in flows:
+            acc[c] += values[c]
+
+    for scenario in ccar.SCENARIOS:
+        u0 = macro[(scenario, 0)][0]
+        for q in range(1, ccar.N_QUARTERS + 1):
+            u, g = macro[(scenario, q)]
+            for le, bl in pairs:
+                ppnr = credit = 0.0
+                for b in book:
+                    if (b["legal_entity"], b["business_line_id"]) != (le, bl):
+                        continue
+                    stress = 1 + params.pd_unemployment_beta * max(0.0, u - u0)
+                    pd_q = min(1.0, b["pd_base"] / 4 * stress)
+                    credit += b["ead"] * pd_q * b["lgd"]
+                    revenue = b["revenue_rate_q"] * (1 + params.revenue_gdp_beta * g)
+                    ppnr += b["ead"] * (revenue - b["expense_rate_q"])
+                shocked = scenario == ccar.SEVERELY_ADVERSE and q == 1
+                tl = trading.get((le, bl), 0.0) if shocked else 0.0
+                values = {"ppnr": ppnr, "credit_loss": credit, "trading_loss": tl,
+                          "net_income": (ppnr - credit - tl) * (1 - params.tax_rate)}
+                add((scenario, q, ccar.BUSINESS_LINE, bl), values)
+                add((scenario, q, ccar.LEGAL_ENTITY, le), values)
+                add((scenario, q, ccar.FIRM, ccar.FIRM_ID), values)  # fmt: skip
+    rwa = {le: c["rwa_trading"] for le, c in capital.items()}
+    for b in book:
+        rwa[b["legal_entity"]] = rwa.get(b["legal_entity"], 0.0) + b["ead"] * b["risk_weight"]
+    nodes = {
+        le: (ccar.LEGAL_ENTITY, c["cet1_start"], rwa[le], c["dividends_q"])
+        for le, c in capital.items()
+    }
+    nodes[ccar.FIRM_ID] = (
+        ccar.FIRM,
+        sum(c["cet1_start"] for c in capital.values()),
+        sum(rwa.values()),
+        sum(c["dividends_q"] for c in capital.values()),
+    )  # fmt: skip
+    metrics: dict[tuple, float] = {}
+    first, last = params.scb_dividend_quarters
+    for node_id, (level, cet1_0, node_rwa, dividends) in nodes.items():
+        start = cet1_0 / node_rwa
+        metrics[(ccar.START_RATIO, level, node_id, "*")] = start
+        for scenario in ccar.SCENARIOS:
+            cet1 = cet1_0
+            path = []
+            for q in range(1, ccar.N_QUARTERS + 1):
+                r = rows[(scenario, q, level, node_id)]
+                cet1 += r["net_income"]
+                r.update(dividends=dividends, cet1=cet1, rwa=node_rwa, cet1_ratio=cet1 / node_rwa)
+                path.append(cet1 / node_rwa)
+            metrics[(ccar.MIN_RATIO, level, node_id, scenario)] = min(path)
+        decline = start - metrics[(ccar.MIN_RATIO, level, node_id, ccar.SEVERELY_ADVERSE)]
+        add_on = (last - first + 1) * dividends / node_rwa
+        metrics[(ccar.SCB, level, node_id, "*")] = max(params.scb_floor, decline + add_on)
+    for key, r in rows.items():
+        if key[2] == ccar.BUSINESS_LINE:
+            r.update(dividends=None, cet1=None, rwa=None, cet1_ratio=None)
+    return rows, metrics
+
+
+def _close(a: float | None, b: float | None) -> bool:
+    if a is None or b is None:
+        return a is None and b is None
+    return abs(a - b) <= TOLERANCE * max(1.0, abs(b))
+
+
+def check_ccar_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
+    """Every ``ccar_projection`` row and every CCAR capital measure in ``risk_metrics`` equals a
+    plain-Python recomputation from the raw banking book, macro scenarios, starting capital and
+    the curated global-market-shock P&L; and stored firm losses equal the sum over business
+    lines and over legal entities, per scenario and quarter.
+    """
+    name = "ccar_projection_matches_raw"
+    expected_rows, expected_metrics = _ccar_from_raw(ctx, spark)
+    stored = {
+        (r["scenario"], r["quarter"], r["node_level"], r["node_id"]): r.asDict()
+        for r in spark.read.parquet(str(ctx.curated("ccar_projection"))).collect()
+    }
+    problems = []
+    if set(stored) != set(expected_rows):
+        problems.append(f"{len(stored)} stored rows vs {len(expected_rows)} expected (keys differ)")
+    columns = (*ccar.LOSS_COLUMNS, *ccar.CAPITAL_COLUMNS)
+    for key, exp in expected_rows.items():
+        got = stored.get(key)
+        if got is None:
+            continue
+        for c in columns:
+            if not _close(got[c], exp[c]):
+                problems.append(f"{key} {c}: stored {got[c]} vs raw {exp[c]}")
+    for (scenario, q) in {(k[0], k[1]) for k in stored}:
+        for c in ("ppnr", "credit_loss", "trading_loss", "net_income"):
+            by_level = {
+                level: sum(v[c] for k, v in stored.items() if k[:3] == (scenario, q, level))
+                for level in (ccar.BUSINESS_LINE, ccar.LEGAL_ENTITY, ccar.FIRM)
+            }
+            firm = by_level[ccar.FIRM]
+            if not all(_close(v, firm) for v in by_level.values()):
+                problems.append(f"{scenario} q{q} {c}: levels do not reconcile {by_level}")
+    metric_rows = (
+        spark.read.parquet(str(ctx.curated("risk_metrics")))
+        .where(F.col("measure").isin(*ccar.CCAR_MEASURE_NAMES))
+        .collect()
+    )
+    got_metrics = {}
+    for r in metric_rows:
+        level, node = (
+            (ccar.FIRM, ccar.FIRM_ID) if r["node_level"] == "firm_id"
+            else (ccar.LEGAL_ENTITY, r["legal_entity"])
+        )  # fmt: skip
+        got_metrics[(r["measure"], level, node, r["scenario"])] = r["value"]
+    if set(got_metrics) != set(expected_metrics):
+        problems.append(f"capital measures {sorted(got_metrics)} vs {sorted(expected_metrics)}")
+    for key, exp in expected_metrics.items():
+        if key in got_metrics and not _close(got_metrics[key], exp):
+            problems.append(f"{key}: stored {got_metrics[key]} vs raw {exp}")
+    detail = (
+        f"{len(expected_rows)} projection rows, {len(expected_metrics)} capital measures recomputed"
+    )
+    if problems:
+        detail += f"; {len(problems)} problems: " + "; ".join(problems[:5])
+    return Check(name, bool(expected_rows) and not problems, detail)
+
+
 CHECKS: list[CheckFn] = [
     check_firm_vector_is_sum_of_book_vectors,
     check_firm_var_from_pnl_scenarios,
@@ -386,6 +543,7 @@ CHECKS: list[CheckFn] = [
     check_stress_firm_pnl_is_sum_of_trades,
     check_frtb_sa_is_sum_of_components,
     check_frtb_imcc_from_raw,
+    check_ccar_from_raw,
 ]
 
 

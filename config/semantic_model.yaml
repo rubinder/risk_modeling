@@ -156,6 +156,47 @@ measures:
       - [firm_id]
       - [firm_id, business_line_id, desk_id]
 
+  ccar_start_cet1_ratio:
+    label: CCAR starting CET1 ratio
+    description: >-
+      Common equity tier 1 capital over risk-weighted assets at the start of the CCAR planning
+      horizon (quarter 0), as a decimal. Scenario is *. A capital ratio: computed for legal
+      entities and the firm only; capital is not allocated to business lines, desks or books.
+    unit: ratio
+    class: structured
+    table: risk_metrics
+    computed_at:
+      - [firm_id]
+      - [firm_id, legal_entity]
+    not_allocated_to: [business_line_id, desk_id, book_id]
+  ccar_min_cet1_ratio:
+    label: CCAR minimum CET1 ratio
+    description: >-
+      Lowest projected CET1 ratio over the nine projected quarters of a CCAR scenario (scenario
+      column: BASELINE or SEVERELY_ADVERSE), as a decimal. The firm's ratio is the firm's CET1
+      over the firm's RWA, not a sum or average of entity ratios. Legal entities and firm only.
+    unit: ratio
+    class: structured
+    carries_scenario: true
+    table: risk_metrics
+    computed_at:
+      - [firm_id]
+      - [firm_id, legal_entity]
+    not_allocated_to: [business_line_id, desk_id, book_id]
+  ccar_scb:
+    label: Stress capital buffer (stylised)
+    description: >-
+      max(2.5%, starting CET1 ratio - minimum ratio under SEVERELY_ADVERSE + planned common
+      dividends of the add-on quarters / RWA in the trough quarter), as a decimal (12 CFR
+      225.8(f)(2)). Scenario is *. Legal entities and firm only; never summed.
+    unit: ratio
+    class: structured
+    table: risk_metrics
+    computed_at:
+      - [firm_id]
+      - [firm_id, legal_entity]
+    not_allocated_to: [business_line_id, desk_id, book_id]
+
 tables:
   risk_metrics:
     columns:
@@ -240,3 +281,27 @@ tables:
       es_rc: {type: DOUBLE, role: metric}
       es_rs: {type: DOUBLE, role: metric}
       es: {type: DOUBLE, role: metric}
+  ccar_projection:
+    # The CCAR path: one row per scenario, projected quarter (1..9) and node. node_level is
+    # BUSINESS_LINE, LEGAL_ENTITY or FIRM; never sum across levels (each level already holds the
+    # whole firm). Loss and revenue columns are additive across nodes of one level within a
+    # scenario and quarter; cet1, rwa and cet1_ratio are null for business lines, and cet1 and
+    # cet1_ratio are levels on a path, not flows (never summed over quarters). No measure is
+    # served from this table, so no Pinot star-tree is built. Read it with the drill-down.
+    # nullable: the column is null on business-line rows (capital is not allocated to them);
+    # Pinot keeps those nulls (column-based null handling) instead of storing 0.
+    columns:
+      as_of_date: {type: DATE, role: time}
+      run_id: {type: STRING, role: dimension}
+      scenario: {type: STRING, role: dimension}
+      quarter: {type: INT, role: dimension}
+      node_level: {type: STRING, role: dimension}
+      node_id: {type: STRING, role: dimension}
+      ppnr: {type: DOUBLE, role: metric}
+      credit_loss: {type: DOUBLE, role: metric}
+      trading_loss: {type: DOUBLE, role: metric}
+      net_income: {type: DOUBLE, role: metric}
+      dividends: {type: DOUBLE, role: metric, nullable: true}
+      cet1: {type: DOUBLE, role: metric, nullable: true}
+      rwa: {type: DOUBLE, role: metric, nullable: true}
+      cet1_ratio: {type: DOUBLE, role: metric, nullable: true}

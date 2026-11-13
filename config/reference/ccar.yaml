@@ -1,0 +1,24 @@
+# CCAR (stylised): parameters of the capital projection and the stress capital buffer.
+# The four model parameters below are the project's own stylised choices, not regulatory
+# values; only the floor and the dividend quarters come from the rule.
+
+# Quarterly PD = annual PD / 4 x (1 + beta x rise in unemployment, percentage points).
+pd_unemployment_beta: 0.35
+# Quarterly revenue rate x (1 + beta x annualised real GDP growth, as a decimal).
+revenue_gdp_beta: 2.0
+# Applied to pre-tax income, losses included (a loss earns a tax credit).
+tax_rate: 0.21
+
+# 12 CFR 225.8(f)(2): the stress capital buffer requirement is the greater of the calculation
+# and 2.5 percent (paragraph (f)(2)(ii) before, (f)(2)(i)(B) and (ii)(B) after 1 Dec 2026).
+scb_floor: 0.025
+
+# Planning-horizon quarters (inclusive) whose planned common stock dividends form the dividend
+# add-on, divided by RWA in the quarter of the lowest projected CET1 ratio.
+# - 12 CFR 225.8(f)(2)(i)(C) as in force until 30 November 2026: "fourth through seventh
+#   quarters of the planning horizon" -> [4, 7].
+# - Final rule "Modifications to the Capital Plan Rule and Stress Capital Buffer Requirement",
+#   91 FR 62636 (2 October 2026, FR Doc 2026-20246), effective 1 December 2026, revises
+#   225.8(f)(2) to "fifth through eighth quarters of the current planning horizon", in line
+#   with moving the buffer's effective date from 1 October to 1 January -> [5, 8].
+scb_dividend_quarters: [5, 8]

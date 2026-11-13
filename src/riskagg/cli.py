@@ -14,7 +14,12 @@ from riskagg.context import (
     raw_path,
     run_context,
 )
-from riskagg.data.banking import make_default_risk_positions
+from riskagg.data.banking import (
+    make_banking_book,
+    make_capital_start,
+    make_default_risk_positions,
+    make_macro_scenarios,
+)
 from riskagg.data.market import make_exposures, make_pnl_vectors, make_sensitivities
 from riskagg.data.org import make_hierarchy, make_risk_factors, make_trades
 from riskagg.data.profiles import PROFILES
@@ -87,6 +92,9 @@ def generate(
             "pnl_vectors": make_pnl_vectors(spark, p, trades, exposures, risk_factors),
             "sensitivities": make_sensitivities(spark, p, exposures, risk_factors),
             "default_risk_positions": make_default_risk_positions(spark, p, trades),
+            "macro_scenarios": make_macro_scenarios(spark, p),
+            "banking_book": make_banking_book(spark, p, hierarchy),
+            "capital_start": make_capital_start(spark, p, hierarchy),
         }
         for name, df in datasets.items():
             df.write.mode("overwrite").parquet(str(raw_path(root, profile, as_of_date, name)))
@@ -111,7 +119,7 @@ def run(
     specs = load_specs(None, model)
     ctx = new_run(profile, as_of_date, root, spec_hash(specs, reference_paths()))
     spark, owned = _session()
-    grain = stress_grain = inputs = None
+    grain = stress_grain = projection = inputs = None
     try:
         hierarchy = spark.read.parquet(str(ctx.raw("hierarchy")))
         pnl_vectors = spark.read.parquet(str(ctx.raw("pnl_vectors")))
@@ -126,8 +134,12 @@ def run(
             shocks=shock_table(
                 spark, load_scenarios(), spark.read.parquet(str(ctx.raw("risk_factors")))
             ),
+            banking_book=spark.read.parquet(str(ctx.raw("banking_book"))),
+            macro_scenarios=spark.read.parquet(str(ctx.raw("macro_scenarios"))),
+            capital_start=spark.read.parquet(str(ctx.raw("capital_start"))),
         )
         stress_grain = inputs.stress_grain().cache()
+        projection = inputs.ccar_projection().cache()
         metrics = run_all(specs, model, grain, p.n_scenarios, inputs)
         curate.write_risk_metrics(metrics, ctx)
         curate.write_pnl_scenarios(grain, ctx, p.n_scenarios)
@@ -136,12 +148,16 @@ def run(
         curate.write_frtb_sa_detail(sa_detail(inputs, levels), ctx)
         ima_levels = [list(c) for c in model.measure("frtb_imcc").computed_at]
         curate.write_frtb_ima_detail(ima_detail(inputs, ima_levels), ctx)
+        curate.write_ccar_projection(projection, ctx)
         audit.write_manifest(
             ctx,
             {
                 "hierarchy": hierarchy,
                 "pnl_vectors": pnl_vectors,
                 "default_risk_positions": inputs.default_risk_positions,
+                "banking_book": inputs.banking_book,
+                "macro_scenarios": inputs.macro_scenarios,
+                "capital_start": inputs.capital_start,
             },
             spark,
             p.n_scenarios,
@@ -162,6 +178,8 @@ def run(
             grain.unpersist()
         if stress_grain is not None:
             stress_grain.unpersist()
+        if projection is not None:
+            projection.unpersist()
         if inputs is not None:
             inputs.release()
         if owned:

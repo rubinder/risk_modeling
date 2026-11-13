@@ -98,10 +98,13 @@ class Drilldown:
     columns: tuple[str, ...]
     filters: Mapping[str, Sequence[str]]
     limit: int
+    # The table has nullable columns: ask Pinot to return nulls, not the type's default value.
+    null_handling: bool = False
 
     def to_pinot_sql(self) -> str:
         select = ", ".join(_ident(c) for c in self.columns)
-        return f"SELECT {select} FROM {_ident(self.table)}{_where(self.filters)} LIMIT {self.limit}"
+        sql = f"SELECT {select} FROM {_ident(self.table)}{_where(self.filters)} LIMIT {self.limit}"
+        return f"SET enableNullHandling = true; {sql}" if self.null_handling else sql
 
 
 def _where(filters: Mapping[str, Sequence[str]]) -> str:
@@ -181,6 +184,13 @@ def build_query(
         return Query(model.vector_table, group_by, ("SUM", "pnl"), fixed, "vector_scenarios", m)
 
     # structured: only ever looked up at a level the spec precomputed
+    for dim in used:
+        if dim in m.not_allocated_to:
+            raise SliceNotAvailable(
+                f"{m.name} cannot be sliced by '{dim}': capital is not allocated to "
+                f"{model.dimensions[dim].get('label', dim).lower()}s, so the measure exists only "
+                f"at {[list(c) for c in m.computed_at]}"
+            )
     wanted = frozenset(group_by)
     level = next((c for c in m.computed_at if frozenset(c) == wanted), None)
     if level is None:
@@ -218,7 +228,8 @@ def build_drilldown(
         raise QueryError(f"limit must be between 1 and {MAX_ROWS - 1}, got {limit}")
     date = as_of_date.isoformat() if hasattr(as_of_date, "isoformat") else as_of_date
     pinned = {"as_of_date": [date], "run_id": [run_id]}
-    return Drilldown(table, tuple(columns), {**pinned, **filters}, limit)
+    nullable = any(spec.get("nullable") for spec in columns.values())
+    return Drilldown(table, tuple(columns), {**pinned, **filters}, limit, nullable)
 
 
 def _metric_column(model: SemanticModel, m: Measure) -> str:
