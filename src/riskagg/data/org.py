@@ -16,8 +16,24 @@ FX_BUCKETS = tuple(c for c in ALL_CCY if c != "USD")
 GIRR_TENORS = (1, 2, 5, 10, 30)
 EQ_BUCKETS = ("1", "5", "8", "12")
 EQ_CCY = {"1": "USD", "5": "EUR", "8": "JPY", "12": "GBP"}
-EQ_DELTA_LH = {"1": 20, "5": 10, "8": 20, "12": 10}
-EQ_VEGA_LH = {"1": 60, "5": 20, "8": 60, "12": 20}
+# Liquidity horizons in days, from Basel MAR33.12 Table 2.
+# Interest rate, specified currencies (EUR, USD, GBP, AUD, JPY, SEK, CAD and the bank's
+# domestic currency, here USD): 10; unspecified currencies (BRL, ZAR here): 20.
+GIRR_SPECIFIED_CCY = ("EUR", "USD", "GBP", "AUD", "JPY", "SEK", "CAD")
+GIRR_DELTA_LH = {"specified": 10, "unspecified": 20}
+GIRR_VEGA_LH = 60  # interest rate volatility
+# Buckets 1, 5, 8 (large market cap) and 12 (large-cap advanced-economy indices) are all large
+# cap (MAR21.72): equity price 10, equity price (large cap) volatility 20.
+EQ_DELTA_LH = {"1": 10, "5": 10, "8": 10, "12": 10}
+EQ_VEGA_LH = {"1": 20, "5": 20, "8": 20, "12": 20}
+# FX specified currency pairs (MAR33.12 footnote 1; every USD pair generated here is listed,
+# including USD/BRL and USD/ZAR): 10; other pairs: 20. FX volatility: 40.
+FX_SPECIFIED_PAIRS = (
+    "USD/EUR", "USD/JPY", "USD/GBP", "USD/AUD", "USD/CAD", "USD/CHF", "USD/MXN", "USD/CNY",
+    "USD/NZD", "USD/RUB", "USD/HKD", "USD/SGD", "USD/TRY", "USD/KRW", "USD/SEK", "USD/ZAR",
+    "USD/INR", "USD/NOK", "USD/BRL", "EUR/JPY", "EUR/GBP", "EUR/CHF", "JPY/AUD",
+)  # fmt: skip
+FX_DELTA_LH = {"specified": 10, "unspecified": 20}
 FX_VEGA_LH = 40
 REGIONS = ("EMEA", "AMER", "APAC")
 N_COUNTERPARTIES = 50
@@ -87,22 +103,29 @@ _RF_SCHEMA = T.StructType(
 _VOL_RANGE = {"GIRR": (0.0005, 0.002), "EQ": (0.01, 0.03), "FX": (0.004, 0.012)}
 
 
+def _girr_delta_lh(ccy: str) -> int:
+    return GIRR_DELTA_LH["specified" if ccy in GIRR_SPECIFIED_CCY else "unspecified"]
+
+
+def _fx_delta_lh(ccy: str) -> int:
+    """Every FX bucket is the currency against USD (MAR21.86)."""
+    return FX_DELTA_LH["specified" if f"USD/{ccy}" in FX_SPECIFIED_PAIRS else "unspecified"]
+
+
 def _risk_factor_specs() -> list[tuple]:
     """(id, class, type, bucket, tenor, currency, liquidity_horizon) in a fixed order."""
     specs: list[tuple] = []
     for ccy in ALL_CCY:
-        lh = 10 if ccy in MAJOR_CCY else 20
+        lh = _girr_delta_lh(ccy)
         for tenor in GIRR_TENORS:
             specs.append((f"GIRR.{ccy}.{tenor}Y", "GIRR", "DELTA", ccy, float(tenor), ccy, lh))
     for bucket in EQ_BUCKETS:
         ccy = EQ_CCY[bucket]
         specs.append((f"EQ.{bucket}", "EQ", "DELTA", bucket, None, ccy, EQ_DELTA_LH[bucket]))
     for ccy in FX_BUCKETS:
-        lh = 10 if ccy in MAJOR_CCY else 20
-        specs.append((f"FX.{ccy}", "FX", "DELTA", ccy, None, ccy, lh))
-    for ccy in ALL_CCY:  # GIRR vega uses the bucket's delta horizon
-        lh = 10 if ccy in MAJOR_CCY else 20
-        specs.append((f"GIRR.{ccy}.VEGA", "GIRR", "VEGA", ccy, None, ccy, lh))
+        specs.append((f"FX.{ccy}", "FX", "DELTA", ccy, None, ccy, _fx_delta_lh(ccy)))
+    for ccy in ALL_CCY:
+        specs.append((f"GIRR.{ccy}.VEGA", "GIRR", "VEGA", ccy, None, ccy, GIRR_VEGA_LH))
     for bucket in EQ_BUCKETS:
         specs.append(
             (f"EQ.{bucket}.VEGA", "EQ", "VEGA", bucket, None, EQ_CCY[bucket], EQ_VEGA_LH[bucket])

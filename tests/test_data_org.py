@@ -63,19 +63,23 @@ def test_risk_factor_rules(spark):
     assert len({r.risk_factor_id for r in rows}) == len(rows)
     girr = [r for r in rows if r.risk_class == "GIRR" and r.factor_type == "DELTA"]
     assert len(girr) == 6 * 5 and {r.tenor_years for r in girr} == {1, 2, 5, 10, 30}
+    # MAR33.12 Table 2. GIRR: specified currencies 10, unspecified (BRL, ZAR) 20.
     for r in girr:
         assert r.liquidity_horizon == (10 if r.bucket in {"USD", "EUR", "GBP", "JPY"} else 20)
+    # Equity buckets 1, 5, 8 and 12 are all large cap or large-cap indices: price 10.
     eq = {r.bucket: r for r in rows if r.risk_class == "EQ" and r.factor_type == "DELTA"}
-    assert {b: x.liquidity_horizon for b, x in eq.items()} == {"1": 20, "5": 10, "8": 20, "12": 10}
+    assert {b: x.liquidity_horizon for b, x in eq.items()} == {"1": 10, "5": 10, "8": 10, "12": 10}
+    # FX: USD/EUR, USD/GBP, USD/JPY, USD/BRL and USD/ZAR are all specified pairs: 10.
     fx = [r for r in rows if r.risk_class == "FX" and r.factor_type == "DELTA"]
     assert {r.bucket for r in fx} == {"EUR", "GBP", "JPY", "BRL", "ZAR"}
-    assert all(r.liquidity_horizon == (10 if r.bucket in {"EUR", "GBP", "JPY"} else 20) for r in fx)
+    assert {r.liquidity_horizon for r in fx} == {10}
+    # Volatilities: interest rate 60, equity (large cap) 20, FX 40.
     vega = [r for r in rows if r.factor_type == "VEGA"]
     assert all(r.tenor_years is None for r in vega)
+    assert {r.liquidity_horizon for r in vega if r.risk_class == "GIRR"} == {60}
+    assert {r.liquidity_horizon for r in vega if r.risk_class == "EQ"} == {20}
     assert {r.liquidity_horizon for r in vega if r.risk_class == "FX"} == {40}
-    for r in vega:
-        if r.risk_class == "EQ":
-            assert r.liquidity_horizon == {"1": 60, "5": 20, "8": 60, "12": 20}[r.bucket]
+    assert {r.liquidity_horizon for r in rows} == {10, 20, 40, 60}
     for cls in ("GIRR", "EQ", "FX"):
         assert any(
             r.in_reduced_set for r in rows if r.risk_class == cls and r.factor_type == "DELTA"
