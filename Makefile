@@ -1,22 +1,29 @@
 ROOT ?= data
 AS_OF ?= $(shell date +%Y-%m-%d)
 PROFILE ?= demo
+DOCKER ?= docker
+RISKAGG ?= uv run riskagg
 
-.PHONY: demo test lint pinot-up pinot-down
+.PHONY: demo demo-pinot test lint pinot-up pinot-down
 
-# generate -> run -> (Pinot up, load) -> query through the client. Works without Docker:
-# the Pinot steps are skipped and the client answers from the curated Parquet files.
+# generate -> run -> (Pinot up, load) -> query through the client. Works without Docker, and
+# when Pinot cannot be started or loaded: the client then answers from the curated Parquet files.
 demo:
-	uv run riskagg generate --profile $(PROFILE) --as-of $(AS_OF) --root $(ROOT)
-	uv run riskagg run --profile $(PROFILE) --as-of $(AS_OF) --root $(ROOT)
-	@if docker info >/dev/null 2>&1; then \
-		$(MAKE) --no-print-directory pinot-up && \
-		uv run riskagg load-pinot --as-of $(AS_OF) --root $(ROOT); \
-	else \
+	$(RISKAGG) generate --profile $(PROFILE) --as-of $(AS_OF) --root $(ROOT)
+	$(RISKAGG) run --profile $(PROFILE) --as-of $(AS_OF) --root $(ROOT)
+	@$(MAKE) --no-print-directory demo-pinot AS_OF=$(AS_OF) ROOT=$(ROOT)
+	$(RISKAGG) query var_99_1d --group-by firm_id --as-of $(AS_OF) --root $(ROOT)
+	$(RISKAGG) query var_99_1d --group-by desk_id --top 5 --as-of $(AS_OF) --root $(ROOT)
+
+# Never fails: a Pinot that cannot be started or loaded only means answers come from Parquet.
+demo-pinot:
+	@if ! $(DOCKER) info >/dev/null 2>&1; then \
 		echo "Docker is not running: skipping Pinot; the client will answer from Parquet."; \
+	elif ! $(MAKE) --no-print-directory pinot-up; then \
+		echo "Pinot could not be started: skipping it; the client will answer from Parquet."; \
+	elif ! $(RISKAGG) load-pinot --as-of $(AS_OF) --root $(ROOT); then \
+		echo "Loading Pinot failed: the client will answer from Parquet."; \
 	fi
-	uv run riskagg query var_99_1d --group-by firm_id --as-of $(AS_OF) --root $(ROOT)
-	uv run riskagg query var_99_1d --group-by desk_id --top 5 --as-of $(AS_OF) --root $(ROOT)
 
 test:
 	uv run pytest -q
@@ -25,7 +32,7 @@ lint:
 	uv run ruff check .
 
 pinot-up:
-	docker compose up -d --wait --wait-timeout 300
+	$(DOCKER) compose up -d --wait --wait-timeout 300
 
 pinot-down:
-	docker compose down
+	$(DOCKER) compose down

@@ -34,7 +34,8 @@ make lint      # uv run ruff check .
 2. `riskagg run`: aggregates, writes the curated tables under `data/curated/`, runs the
    reconciliation checks, and marks the run official only if all of them pass.
 3. If `docker info` succeeds: `make pinot-up` (one Pinot container, `docker-compose.yml`) and
-   `riskagg load-pinot`. Otherwise it prints that Pinot is skipped.
+   `riskagg load-pinot`. If Docker is not running, Pinot does not start, or the load fails, it
+   prints one line saying so and that the client will answer from Parquet, and goes on.
 4. `riskagg query var_99_1d --group-by firm_id` and the five desks with the largest VaR. Each
    answer names its source (`pinot` or `parquet`) and the run that produced it.
 
@@ -112,18 +113,18 @@ lists every measure with its class, the slices it may be queried at and its comb
 
 | Capability | Where in the code | Where explained | Coverage |
 |---|---|---|---|
-| Metadata-driven aggregation on Spark | `config/semantic_model.yaml`, `config/aggregations.yaml`, `src/riskagg/engine/spec.py`, `engine/runner.py`, `engine/vectors.py` | [05 §2-3](docs/study/05-aggregation-engineering.md) | Full for the measures built |
-| Reducing the cost of high-dimensional aggregations | Reporting grain (`engine/grain.py`), declared grouping sets in one pass instead of a 512-set cube, vectors kept as arrays (`sum_vectors`) | [05 §2-4](docs/study/05-aggregation-engineering.md) | Measured: see Benchmark below |
-| Semantic layer for BI and AI queries | `src/riskagg/semantic/model.py`, `semantic/query.py`, `GET /catalog`, `riskagg dictionary` | [05 §5](docs/study/05-aggregation-engineering.md), [data dictionary](docs/data-dictionary.md) | The model, catalogue and refusals are built; no BI tool or language-model front end is connected |
-| Spark tuning: partitioning, shuffle, memory | `src/riskagg/bench/variants.py`, `bench/runner.py`, `src/riskagg/spark.py` | [05 §6-7](docs/study/05-aggregation-engineering.md), [report](docs/benchmarks/report.md) | Partial: local mode on one machine, 100,000 trades (limited by local disk space); shuffle bytes, task times and peak execution memory from Spark's REST API; no network I/O, since local-mode shuffles go through the local disk |
-| Self-service aggregations without new code | `config/aggregations.yaml`; new VaR/ES levels or windows as `vector` measures in `config/semantic_model.yaml` | [Adding an aggregation](#adding-an-aggregation-by-editing-yaml) | New slices and new VaR/ES parameters need no code; a new structured measure (a new formula) needs a function in `MEASURE_REGISTRY` |
-| APIs and curated datasets for UIs and notebooks | `src/riskagg/serving/curate.py`, `serving/api.py`, `serving/client.py`, `notebooks/replicate.ipynb` | [Querying](#querying) | API, client and notebook built; no UI |
-| OLAP serving (Apache Pinot) | `src/riskagg/serving/pinot.py`, `semantic/pinot_schema.py`, `serving/executors.py`, `docker-compose.yml` | [05 §5](docs/study/05-aggregation-engineering.md), [01 Q11](docs/study/01-var-es.md) | One quick-start container on one machine; no Druid |
-| Risk aggregation for VaR, stress testing, CCAR, FRTB | `src/riskagg/measures/`, `src/riskagg/conventions.py` | [01](docs/study/01-var-es.md), [02](docs/study/02-stress.md), [03](docs/study/03-ccar.md), [04](docs/study/04-frtb.md) | Simplified relative to the rules; every simplification is listed below |
-| Auditable, reportable metrics | `src/riskagg/engine/audit.py`, `src/riskagg/context.py` | [05 §8](docs/study/05-aggregation-engineering.md), [Auditability](#auditability) | Full for a single machine |
-| Python and SQL | Python throughout; Pinot SQL rendered in `Query.to_pinot_sql` (`semantic/query.py`); Spark through the DataFrame API | - | Java is not used; Spark SQL is written with the DataFrame API rather than SQL strings |
-| Performance diagnostics | Benchmark metrics and executed plans from Spark's REST status API (`bench/runner.py`) | [05 §6-7](docs/study/05-aggregation-engineering.md) | Task run times, peak execution memory per task, shuffle bytes and records; not network I/O |
-| Engineering practice | Tests against independent references (`tests/reference/`), golden tests that pin the numbers of the study pages' worked examples, reconciliation before a run is official | - | There is no team-leadership artefact here |
+| Aggregations declared in YAML, executed by Spark | `config/semantic_model.yaml`, `config/aggregations.yaml`, `src/riskagg/engine/spec.py`, `engine/runner.py`, `engine/vectors.py` | [05 §2-3](docs/study/05-aggregation-engineering.md) | Full for the measures built |
+| Keeping many-dimension roll-ups cheap | Reporting grain (`engine/grain.py`), declared grouping sets in one pass instead of a 512-set cube, vectors kept as arrays (`sum_vectors`) | [05 §2-4](docs/study/05-aggregation-engineering.md) | Measured: see Benchmark below |
+| A business-level model that tools and people can query | `src/riskagg/semantic/model.py`, `semantic/query.py`, `GET /catalog`, `riskagg dictionary` | [05 §5](docs/study/05-aggregation-engineering.md), [data dictionary](docs/data-dictionary.md) | The model, catalogue and refusals are built; no BI tool or language-model front end is connected |
+| Measured Spark tuning (shuffle, partition count, joins, skew) | `src/riskagg/bench/variants.py`, `bench/runner.py`, `src/riskagg/spark.py` | [05 §6-7](docs/study/05-aggregation-engineering.md), [report](docs/benchmarks/report.md) | Partial: local mode on one machine, 100,000 trades (limited by local disk space); shuffle bytes, task times and peak execution memory from Spark's REST API; no network I/O, since local-mode shuffles go through the local disk |
+| New slices and VaR/ES variants by configuration alone | `config/aggregations.yaml`; new VaR/ES levels or windows as `vector` measures in `config/semantic_model.yaml` | [Adding an aggregation](#adding-an-aggregation-by-editing-yaml) | New slices and new VaR/ES parameters need no code; a new structured measure (a new formula) needs a function in `MEASURE_REGISTRY` |
+| HTTP API, Python client and replication notebook over curated tables | `src/riskagg/serving/curate.py`, `serving/api.py`, `serving/client.py`, `notebooks/replicate.ipynb` | [Querying](#querying) | API, client and notebook built; no UI |
+| Serving from Apache Pinot, with Parquet fallback | `src/riskagg/serving/pinot.py`, `semantic/pinot_schema.py`, `serving/executors.py`, `docker-compose.yml` | [05 §5](docs/study/05-aggregation-engineering.md), [01 Q11](docs/study/01-var-es.md) | One quick-start container on one machine; no Druid |
+| VaR/ES, stress, CCAR and FRTB measures and how each combines | `src/riskagg/measures/`, `src/riskagg/conventions.py` | [01](docs/study/01-var-es.md), [02](docs/study/02-stress.md), [03](docs/study/03-ccar.md), [04](docs/study/04-frtb.md) | Simplified relative to the rules; every simplification is listed below |
+| Traceable runs: hashes, checksums, reconciliation, official flag | `src/riskagg/engine/audit.py`, `src/riskagg/context.py` | [05 §8](docs/study/05-aggregation-engineering.md), [Auditability](#auditability) | Full for a single machine |
+| Languages: Python, SQL | Python throughout; Pinot SQL rendered in `Query.to_pinot_sql` (`semantic/query.py`); Spark through the DataFrame API | - | Java is not used; Spark SQL is written with the DataFrame API rather than SQL strings |
+| Reading Spark's metrics and plans | Benchmark metrics and executed plans from Spark's REST status API (`bench/runner.py`) | [05 §6-7](docs/study/05-aggregation-engineering.md) | Task run times, peak execution memory per task, shuffle bytes and records; not network I/O |
+| Testing discipline | Tests against independent references (`tests/reference/`), golden tests that pin the numbers of the study pages' worked examples, reconciliation before a run is official | - | There is no team-leadership artefact here |
 
 ## Adding an aggregation by editing YAML
 
@@ -140,10 +141,13 @@ Example: precompute 99% one-day VaR by region. Append this to `config/aggregatio
 ```
 <!-- example-spec:end -->
 
-Then run again:
+Then run again for the date whose raw data `make demo` generated. That is its `AS_OF`, today's
+date unless you passed one (`make demo AS_OF=2026-11-12`); `riskagg run` without `--as-of`
+also uses today and fails if no raw data exists for it:
 
 ```sh
-uv run riskagg run --profile demo --root data
+uv run riskagg run --profile demo --as-of 2026-11-12 --root data   # use your demo's AS_OF
+uv run riskagg load-pinot --as-of 2026-11-12 --root data           # only if Pinot is in use
 ```
 
 The run validates the spec against the semantic model (an unknown dimension, a dimension the
@@ -166,7 +170,9 @@ profile and checks those rows, and that they equal the ad-hoc answer below.
 A vector measure can be queried by any subset of the grain without a spec, because the query
 layer rebuilds the vectors from `pnl_scenarios`:
 `uv run riskagg query var_99_1d --group-by region`. A spec makes the node part of the
-official, reconciled output and stores it in Pinot. A new VaR or ES level, window or horizon is
+official, reconciled output in `risk_metrics`. Pinot holds it once the new run is loaded with
+`riskagg load-pinot`; until then Pinot still holds the previous run, so the service answers
+from the new run's Parquet files. A new VaR or ES level, window or horizon is
 a new `vector` measure in `config/semantic_model.yaml` (`function: var` or `es`, with
 `params`), also without code. A new formula, such as a new capital charge, is code: a
 function registered in `MEASURE_REGISTRY` (`src/riskagg/engine/runner.py`).
@@ -287,7 +293,8 @@ Then the [data dictionary](docs/data-dictionary.md) and `notebooks/replicate.ipy
 ## Simplifications
 
 Every simplification relative to the regulation is marked `SIMPLIFICATION:` in the code and
-listed on a study page; `tests/test_docs.py` checks that every marker under `src/` is listed.
+listed on a study page; `tests/test_docs.py` checks that every marker under `src/` and
+`config/` is listed.
 In summary (details and paragraph references on the pages):
 
 - [VaR and ES](docs/study/01-var-es.md#4-what-this-project-simplifies-compared-with-a-real-bank):

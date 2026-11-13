@@ -6,8 +6,10 @@
   gives ``var_99_1d`` rows at ``node_level == "region"`` through ``riskagg run`` with no
   Python change;
 * the replication notebook runs top to bottom on the tiny profile, without Pinot or a server;
-* every ``SIMPLIFICATION:`` marker under ``src/`` is listed on a study page;
-* every number the README quotes from the benchmark is in the generated report.
+* every ``SIMPLIFICATION:`` marker under ``src/`` and ``config/`` is listed on a study page;
+* every number the README quotes from the benchmark is tied to its sentence in the report;
+* ``make demo`` goes on to the queries when Pinot cannot be started or loaded;
+* README links and anchors resolve, and no tracked file names the private role text.
 """
 
 import json
@@ -81,19 +83,22 @@ def test_cli_dictionary(tmp_path):
 # --- README: add an aggregation by editing YAML ----------------------------------------------
 
 
-def _readme_example_spec() -> list[dict]:
+def _readme_example_yaml() -> str:
     block = _section(README.read_text(), "example-spec:start", "example-spec:end")
     (yaml_text,) = re.findall(r"```yaml\n(.*?)```", block, flags=re.DOTALL)
-    return yaml.safe_load(yaml_text)
+    return yaml_text
 
 
 def test_readme_example_adds_var_by_region_without_code(tmp_run, tmp_path, monkeypatch):
-    spec = _readme_example_spec()
+    yaml_text = _readme_example_yaml()
+    spec = yaml.safe_load(yaml_text)
     assert [s["measure"] for s in spec] == ["var_99_1d"]
     config = tmp_path / "config"
     shutil.copytree(paths.CONFIG_DIR, config)
     aggregations = config / "aggregations.yaml"
-    aggregations.write_text(aggregations.read_text() + "\n" + yaml.safe_dump(spec, sort_keys=False))
+    # exactly what the README says: append the block's text to the file
+    existing = aggregations.read_text()
+    aggregations.write_text(existing + ("" if existing.endswith("\n") else "\n") + yaml_text)
     monkeypatch.setattr(paths, "CONFIG_DIR", config)
 
     root = tmp_path / "data"
@@ -148,54 +153,55 @@ def test_notebook_executes_on_tiny(tmp_path):
 
 # --- simplifications -------------------------------------------------------------------------
 
-# Each SIMPLIFICATION marker in src/ -> (file, words from the marker's first line) and the
+# Each SIMPLIFICATION marker in src/ or config/ -> (file, words from the marker's first line) and the
 # study page whose simplifications list carries it, with words from that list item.
 MARKER_PAGES: list[tuple[str, str, str, str]] = [
-    ("semantic/query.py", "multi-day horizons scale", "01-var-es.md", "Square-root-of-time"),
-    ("measures/var.py", "multi-day horizons scale", "01-var-es.md", "Square-root-of-time"),
-    ("data/market.py", "one common factor per risk class", "01-var-es.md", "Factor model"),
-    ("data/market.py", "the stressed window is", "01-var-es.md", "Stressed window"),
-    ("data/market.py", "scenario P&L is linear", "01-var-es.md", "Linear P&L"),
-    ("data/market.py", "curvature uses a symmetric", "04-frtb.md", "Curvature up equals"),
-    ("engine/audit.py", "assumes the firm-node row", "01-var-es.md", "Firm reconciliation"),
-    ("engine/audit.py", "assumes the firm rows come", "04-frtb.md", "IMA reconciliation"),
-    ("measures/stress.py", "scenarios are hypothetical", "02-stress.md", "Hypothetical"),
-    ("measures/stress.py", "second-order Taylor", "02-stress.md", "Sensitivity-based"),
-    ("measures/stress.py", "the shock is instantaneous", "02-stress.md", "Instantaneous shock"),
-    ("data/banking.py", "two hand-set paths", "03-ccar.md", "Hand-set macro paths"),
-    ("data/banking.py", "three stylised portfolios", "03-ccar.md", "Three stylised loan"),
-    ("measures/ccar.py", "tax is applied symmetrically", "03-ccar.md", "Tax applied"),
-    ("measures/ccar.py", "constant balance sheet", "03-ccar.md", "Constant balance sheet"),
-    ("measures/ccar.py", "no preferred stock", "03-ccar.md", "No preferred stock"),
-    ("measures/ccar.py", "no counterparty default", "03-ccar.md", "No counterparty default"),
-    ("measures/ccar.py", "the stress capital buffer", "03-ccar.md", "legal entities as well"),
-    ("measures/frtb_sa.py", "one curve per currency", "04-frtb.md", "One curve per currency"),
-    ("measures/frtb_sa.py", "equity spot only", "04-frtb.md", "Equity spot only"),
-    ("measures/frtb_sa.py", "one vega factor", "04-frtb.md", "One vega factor per bucket"),
-    ("measures/frtb_sa.py", "one curvature factor", "04-frtb.md", "One curvature factor"),
-    ("measures/frtb_sa.py", "sensitivities are taken", "04-frtb.md", "Sensitivities taken"),
-    ("measures/frtb_drc.py", "gross JTD", "04-frtb.md", "Gross JTD"),
-    ("measures/frtb_drc.py", "no maturity scaling", "04-frtb.md", "No maturity scaling"),
-    ("measures/frtb_drc.py", "long and short positions", "04-frtb.md", "ignores seniority"),
-    ("measures/frtb_drc.py", "two buckets", "04-frtb.md", "Two DRC buckets"),
-    ("measures/frtb_drc.py", "the residual risk add-on", "04-frtb.md", "RRAO at the 1.0%"),
-    ("measures/frtb_ima.py", "the 10-day ES", "04-frtb.md", "scaled by √10"),
-    ("measures/frtb_ima.py", "the reduced set is not", "04-frtb.md", "never tested against"),
-    ("measures/frtb_ima.py", "liquidity horizons are", "04-frtb.md", "MAR33.12 floors"),
-    ("measures/frtb_ima.py", "the capital reported", "04-frtb.md", "IMCC only"),
-    ("data/org.py", "bucket 12 (an index)", "04-frtb.md", "bucket 12 (an index)"),
-    ("data/org.py", "each risk factor joins", "04-frtb.md", "drawn at random"),
+    ("src/riskagg/semantic/query.py", "multi-day horizons scale", "01-var-es.md", "Square-root-of-time"),
+    ("src/riskagg/measures/var.py", "multi-day horizons scale", "01-var-es.md", "Square-root-of-time"),
+    ("src/riskagg/data/market.py", "one common factor per risk class", "01-var-es.md", "Factor model"),
+    ("src/riskagg/data/market.py", "the stressed window is", "01-var-es.md", "Stressed window"),
+    ("src/riskagg/data/market.py", "scenario P&L is linear", "01-var-es.md", "Linear P&L"),
+    ("src/riskagg/data/market.py", "curvature uses a symmetric", "04-frtb.md", "Curvature up equals"),
+    ("src/riskagg/engine/audit.py", "assumes the firm-node row", "01-var-es.md", "Firm reconciliation"),
+    ("src/riskagg/engine/audit.py", "assumes the firm rows come", "04-frtb.md", "IMA reconciliation"),
+    ("src/riskagg/measures/stress.py", "scenarios are hypothetical", "02-stress.md", "Hypothetical"),
+    ("src/riskagg/measures/stress.py", "second-order Taylor", "02-stress.md", "Sensitivity-based"),
+    ("src/riskagg/measures/stress.py", "the shock is instantaneous", "02-stress.md", "Instantaneous shock"),
+    ("src/riskagg/data/banking.py", "two hand-set paths", "03-ccar.md", "Hand-set macro paths"),
+    ("src/riskagg/data/banking.py", "three stylised portfolios", "03-ccar.md", "Three stylised loan"),
+    ("src/riskagg/measures/ccar.py", "tax is applied symmetrically", "03-ccar.md", "Tax applied"),
+    ("src/riskagg/measures/ccar.py", "constant balance sheet", "03-ccar.md", "Constant balance sheet"),
+    ("src/riskagg/measures/ccar.py", "no preferred stock", "03-ccar.md", "No preferred stock"),
+    ("src/riskagg/measures/ccar.py", "no counterparty default", "03-ccar.md", "No counterparty default"),
+    ("src/riskagg/measures/ccar.py", "the stress capital buffer", "03-ccar.md", "legal entities as well"),
+    ("src/riskagg/measures/frtb_sa.py", "one curve per currency", "04-frtb.md", "One curve per currency"),
+    ("src/riskagg/measures/frtb_sa.py", "equity spot only", "04-frtb.md", "Equity spot only"),
+    ("src/riskagg/measures/frtb_sa.py", "one vega factor", "04-frtb.md", "One vega factor per bucket"),
+    ("src/riskagg/measures/frtb_sa.py", "one curvature factor", "04-frtb.md", "One curvature factor"),
+    ("src/riskagg/measures/frtb_sa.py", "sensitivities are taken", "04-frtb.md", "Sensitivities taken"),
+    ("src/riskagg/measures/frtb_drc.py", "gross JTD", "04-frtb.md", "Gross JTD"),
+    ("src/riskagg/measures/frtb_drc.py", "no maturity scaling", "04-frtb.md", "No maturity scaling"),
+    ("src/riskagg/measures/frtb_drc.py", "long and short positions", "04-frtb.md", "ignores seniority"),
+    ("src/riskagg/measures/frtb_drc.py", "two buckets", "04-frtb.md", "Two DRC buckets"),
+    ("src/riskagg/measures/frtb_drc.py", "the residual risk add-on", "04-frtb.md", "RRAO at the 1.0%"),
+    ("src/riskagg/measures/frtb_ima.py", "the 10-day ES", "04-frtb.md", "scaled by √10"),
+    ("src/riskagg/measures/frtb_ima.py", "the reduced set is not", "04-frtb.md", "never tested against"),
+    ("src/riskagg/measures/frtb_ima.py", "liquidity horizons are", "04-frtb.md", "MAR33.12 floors"),
+    ("src/riskagg/measures/frtb_ima.py", "the capital reported", "04-frtb.md", "IMCC only"),
+    ("src/riskagg/data/org.py", "bucket 12 (an index)", "04-frtb.md", "bucket 12 (an index)"),
+    ("src/riskagg/data/org.py", "each risk factor joins", "04-frtb.md", "drawn at random"),
+    ("config/reference/frtb_sa.yaml", "only buckets 1, 5, 8 and 12", "04-frtb.md", "buckets 1, 5, 8 and 12 only"),
 ]
 
 
 def _markers() -> list[tuple[str, str]]:
-    src = REPO_ROOT / "src/riskagg"
+    files = [*(REPO_ROOT / "src").rglob("*.py"), *(REPO_ROOT / "config").rglob("*.yaml")]
     found = []
-    for path in sorted(src.rglob("*.py")):
+    for path in sorted(files):
         for line in path.read_text().splitlines():
             m = re.search(r"SIMPLIFICATION:\s*(.*)", line)
             if m:
-                found.append((path.relative_to(src).as_posix(), m.group(1).strip()))
+                found.append((path.relative_to(REPO_ROOT).as_posix(), m.group(1).strip()))
     return found
 
 
@@ -215,12 +221,12 @@ def test_every_simplification_marker_is_listed_on_a_study_page():
     for file, text in markers:
         entries = [e for e in MARKER_PAGES if e[0] == file and e[1].lower() in text.lower()]
         if len(entries) != 1:
-            unmatched.append(f"src/riskagg/{file}: {text}")
+            unmatched.append(f"{file}: {text}")
             continue
         used.add(entries[0])
         _, _, page, phrase = entries[0]
         assert phrase in _simplifications_list(page), (
-            f"src/riskagg/{file} marker '{text}' is not in the simplifications list of {page}"
+            f"{file} marker '{text}' is not in the simplifications list of {page}"
         )
     assert not unmatched, "markers with no study-page entry in MARKER_PAGES:\n" + "\n".join(
         unmatched
@@ -231,21 +237,130 @@ def test_every_simplification_marker_is_listed_on_a_study_page():
 # --- README facts ------------------------------------------------------------------------------
 
 
-def test_readme_benchmark_numbers_are_in_the_report():
-    quoted = _section(README.read_text(), "benchmark:start", "benchmark:end")
-    report = REPORT.read_text()
-    numbers = re.findall(r"\d[\d,]*(?:\.\d+)?", quoted)
-    assert numbers
-    for n in numbers:
-        assert re.search(rf"(?<![\d.,]){re.escape(n)}(?![\d])", report), (
-            f"README quotes {n}, which is not in docs/benchmarks/report.md"
-        )
+# Each README benchmark claim (its numbers, as the README words them) and the report lines that
+# state it. Every number in the README's benchmark section must belong to one of these claims.
+BENCHMARK_CLAIMS: list[tuple[str, tuple[str, ...]]] = [
+    ("Apple M3", ("| CPU | Apple M3 |",)),
+    ("8 logical cores", ("| Logical cores | 8 |",)),
+    ("16 GiB", ("| RAM | 16 GiB |",)),
+    ("100,000 trades", ("| Trades | 100,000 |",)),
+    ("250 scenarios per vector", ("| Scenarios per vector | 250 |",)),
+    ("356.5 MiB of P&L vectors", ("| `pnl_vectors` on disk | 356.5 MiB",)),
+    (
+        "took 0.96 s against 12.23 s for explode-and-regroup, 12.76× faster",
+        ("`array_index_sum` 0.96 s against `explode_regroup` 12.23 s: 12.76× faster.",),
+    ),
+    (
+        "took 1.85 s against 5.00 s for one aggregation per level from trades, 2.70× faster",
+        ("`grain_then_grouping_sets` 1.85 s against `per_level_from_trades` 5.00 s: 2.70× faster.",),
+    ),
+    (
+        (
+            "Shuffle partitions: 8 (one per core) took 0.92 s against 3.51 s with 200 static "
+            "partitions, 3.80× faster"
+        ),
+        (
+            "`sized_to_data`: 8 shuffle partitions (one per core)",
+            "`static_200`: 200 shuffle partitions",
+            "`sized_to_data` 0.92 s against `static_200` 3.51 s: 3.80× faster.",
+        ),
+    ),
+]
 
 
-def test_readme_links_resolve():
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def test_readme_benchmark_claims_match_the_report():
+    quoted = _flat(_section(README.read_text(), "benchmark:start", "benchmark:end"))
+    report = _flat(REPORT.read_text())
+    rest = quoted
+    for claim, sources in BENCHMARK_CLAIMS:
+        assert claim in quoted, f"README benchmark section no longer says {claim!r}"
+        for source in sources:
+            assert source in report, f"report does not state {source!r} (README: {claim!r})"
+        rest = rest.replace(claim, "")
+    assert not re.findall(r"\d", rest), f"README numbers not tied to a report line: {rest!r}"
+
+
+def _slug(heading: str) -> str:
+    """GitHub's anchor for a heading: lower case, punctuation dropped, spaces to hyphens."""
+    text = re.sub(r"[^\w\- ]", "", heading.strip().lower())
+    return text.replace(" ", "-")
+
+
+def _anchors(path) -> set[str]:
+    return {_slug(h) for h in re.findall(r"^#+ (.+)$", path.read_text(), flags=re.MULTILINE)}
+
+
+def test_readme_links_and_anchors_resolve():
     text = README.read_text()
-    for target in re.findall(r"\]\(([^)#]+)(?:#[^)]*)?\)", text):
-        if "://" in target:
+    links = re.findall(r"\]\(([^)\s]+)\)", text)
+    assert links
+    for link in links:
+        if "://" in link:
             continue
-        assert (REPO_ROOT / target).exists(), f"README links to missing {target}"
-    assert "job-description" not in text and "job description" not in text.lower()
+        target, _, anchor = link.partition("#")
+        path = REPO_ROOT / target if target else README
+        assert path.exists(), f"README links to missing {target}"
+        if anchor:
+            assert anchor in _anchors(path), f"README links to missing anchor {link}"
+
+
+# Built from parts so this file does not match its own search.
+_ROLE_TEXT = ["job" + " description", "job" + "-description", "lead" + " engineer"]
+# The one allowed hit: Spark's own term for a job label, in the benchmark runner.
+_ALLOWED = {"src/riskagg/bench/runner.py": "tagged with a " + _ROLE_TEXT[0] + "."}
+
+
+def test_no_tracked_file_refers_to_the_role_text():
+    pattern = "\\|".join(_ROLE_TEXT)
+    out = subprocess.run(
+        ["git", "grep", "-n", "-i", pattern],
+        cwd=REPO_ROOT, check=False, capture_output=True, text=True,
+    )  # fmt: skip
+    assert out.returncode in (0, 1), out.stderr
+    hits = [
+        line for line in out.stdout.splitlines()
+        if not any(line.startswith(f"{f}:") and ok in line for f, ok in _ALLOWED.items())
+    ]  # fmt: skip
+    assert not hits, "role text found:\n" + "\n".join(hits)
+
+
+# --- make demo without a working Pinot -------------------------------------------------------
+
+
+def _stub(path, body: str) -> str:
+    path.write_text("#!/bin/sh\n" + body)
+    path.chmod(0o755)
+    return str(path)
+
+
+@pytest.mark.parametrize(
+    ("docker_body", "riskagg_fails_on", "message"),
+    [
+        ('[ "$1" = info ] && exit 1\nexit 0\n', None, "Docker is not running"),
+        ('[ "$1" = info ] && exit 0\nexit 1\n', None, "Pinot could not be started"),
+        ('exit 0\n', "load-pinot", "Loading Pinot failed"),
+    ],
+)  # fmt: skip
+def test_make_demo_continues_to_the_queries_without_pinot(
+    tmp_path, docker_body, riskagg_fails_on, message
+):
+    """Docker down, Pinot not starting, or loading failing: the demo still runs its queries."""
+    log = tmp_path / "calls.log"
+    docker = _stub(tmp_path / "docker", f'echo "docker $*" >> {log}\n{docker_body}')
+    fail = f'[ "$1" = "{riskagg_fails_on}" ] && exit 1\n' if riskagg_fails_on else ""
+    riskagg = _stub(tmp_path / "riskagg", f'echo "riskagg $*" >> {log}\n{fail}exit 0\n')
+    result = subprocess.run(
+        ["make", "--no-print-directory", "demo", f"DOCKER={docker}", f"RISKAGG={riskagg}",
+         "AS_OF=2026-11-12", f"ROOT={tmp_path / 'data'}"],
+        cwd=REPO_ROOT, check=False, capture_output=True, text=True,
+    )  # fmt: skip
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert message in result.stdout and "answer from Parquet" in result.stdout
+    lines = log.read_text().splitlines()
+    riskagg_cmds = [line.split()[1] for line in lines if line.startswith("riskagg ")]
+    assert riskagg_cmds[:2] == ["generate", "run"]
+    assert riskagg_cmds[-2:] == ["query", "query"]
