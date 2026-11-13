@@ -4,10 +4,11 @@
 extension point: later tasks append ``(ctx, spark) -> Check`` functions for stress, FRTB, CCAR.
 """
 
+import itertools
 import json
 import math
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 
 import numpy as np
@@ -16,11 +17,12 @@ from pyspark.sql import functions as F
 
 from riskagg.context import RunContext
 from riskagg.conventions import es_from_pnl, var_from_pnl
-from riskagg.engine.vectors import GRAIN_DIMS
+from riskagg.engine.spec import AggregationSpec, load_specs
+from riskagg.engine.vectors import GRAIN_DIMS, node_level, unique_sets
 from riskagg.measures import ccar, frtb_ima
 from riskagg.measures.stress import load_scenarios
 from riskagg.paths import REPO_ROOT
-from riskagg.semantic.model import load_model
+from riskagg.semantic.model import Measure, load_model
 from riskagg.spark import SESSION_CONF
 
 TOLERANCE = 1e-6
@@ -107,86 +109,169 @@ def _within(diff: str, ref: str) -> "F.Column":
     return F.abs(F.col(diff)) <= TOLERANCE * F.greatest(F.lit(1.0), F.abs(F.col(ref)))
 
 
-def _raw_firm_vector(ctx: RunContext, spark: SparkSession) -> DataFrame:
+def _grain_cells(df: DataFrame, value: str) -> DataFrame:
+    """``df``'s P&L summed per reporting-grain cell, window and scenario."""
+    return df.groupBy(*GRAIN_DIMS, "window", "scenario_idx").agg(F.sum("pnl").alias(value))
+
+
+def check_pnl_scenarios_match_raw_per_grain_cell(ctx: RunContext, spark: SparkSession) -> Check:
+    """Every curated ``pnl_scenarios`` cell equals the raw trade vectors of that cell.
+
+    A cell is a reporting-grain node (book, its org and booking attributes, asset class,
+    currency, risk class), a window and a scenario. The raw side joins the raw trade vectors
+    to the raw hierarchy itself, so P&L moved between books, or a row relabelled to another
+    book or desk, fails here even when the firm total is unchanged. The firm vector equalling
+    the sum of the book vectors follows.
+    """
+    name = "pnl_scenarios_equal_raw_per_grain_cell"
     raw = spark.read.parquet(str(ctx.raw("pnl_vectors")))
-    return (
-        raw.select("window", F.posexplode("pnl").alias("scenario_idx", "pnl"))
-        .groupBy("window", "scenario_idx")
-        .agg(F.sum("pnl").alias("raw_pnl"))
+    hier_cols = [c for c in GRAIN_DIMS if c not in raw.columns]
+    hierarchy = spark.read.parquet(str(ctx.raw("hierarchy"))).select("book_id", *hier_cols)
+    exploded = raw.join(F.broadcast(hierarchy), "book_id", "left").select(
+        *GRAIN_DIMS, "window", F.posexplode("pnl").alias("scenario_idx", "pnl")
     )
-
-
-def check_firm_vector_is_sum_of_book_vectors(ctx: RunContext, spark: SparkSession) -> Check:
-    """Raw firm vector (all trades) equals the sum of the curated book vectors, per scenario."""
-    name = "firm_vector_equals_sum_of_book_vectors"
     curated = spark.read.parquet(str(ctx.curated("pnl_scenarios")))
-    books = (
-        curated.groupBy("book_id", "window", "scenario_idx")
-        .agg(F.sum("pnl").alias("pnl"))
-        .groupBy("window", "scenario_idx")
-        .agg(F.sum("pnl").alias("books_pnl"))
+    keys = [*GRAIN_DIMS, "window", "scenario_idx"]
+    joined = _grain_cells(exploded, "raw_pnl").join(
+        _grain_cells(curated, "curated_pnl"), keys, "full_outer"
     )
-    joined = _raw_firm_vector(ctx, spark).join(books, ["window", "scenario_idx"], "full_outer")
-    joined = joined.withColumn("diff", F.col("raw_pnl") - F.col("books_pnl"))
+    joined = joined.withColumn("diff", F.col("raw_pnl") - F.col("curated_pnl"))
     stats = joined.agg(
         F.count(F.lit(1)).alias("n"),
-        F.sum((F.col("raw_pnl").isNull() | F.col("books_pnl").isNull()).cast("int")).alias("miss"),
+        F.sum((F.col("raw_pnl").isNull() | F.col("curated_pnl").isNull()).cast("int")).alias("miss"),
         F.sum((~_within("diff", "raw_pnl")).cast("int")).alias("bad"),
         F.max(F.abs("diff")).alias("max_diff"),
     ).first()
     missing, bad, n = stats["miss"] or 0, stats["bad"] or 0, stats["n"]
     ok = n > 0 and missing == 0 and bad == 0
     return Check(
-        name, ok, f"{n} (window, scenario) points, {missing} missing, {bad} outside tolerance, "
-        f"max abs diff {stats['max_diff']}"
+        name, ok, f"{n} (grain cell, window, scenario) points, {missing} on one side only, "
+        f"{bad} outside tolerance, max abs diff {stats['max_diff']}"
     )  # fmt: skip
 
 
-def check_firm_var_from_pnl_scenarios(ctx: RunContext, spark: SparkSession) -> Check:
-    """Firm-level vector measures in ``risk_metrics`` equal the measure of the curated firm vector.
+_DERIVED = ("sum_children", "diversification", "incremental")
 
-    SIMPLIFICATION: assumes the firm-node row of a measure comes from an unfiltered
-    specification; a filtered firm node would need the filter applied here too.
+
+def _vector_value(measure: Measure, pnl: np.ndarray) -> float:
+    fn = var_from_pnl if measure.function == "var" else es_from_pnl
+    horizon = math.sqrt(float(measure.params.get("horizon_days", 1)))
+    return fn(pnl, float(measure.params["level"])) * horizon
+
+
+def _node_vectors(
+    pnl: DataFrame, dims: list[str], filters: Mapping[str, Sequence[str]]
+) -> dict[tuple, np.ndarray]:
+    """``{(window, *dim values): vector}`` from one aggregation of curated ``pnl_scenarios``."""
+    for d, values in filters.items():
+        pnl = pnl.where(F.col(d).isin(list(values)))
+    rows = (
+        pnl.groupBy("window", *dims, "scenario_idx").agg(F.sum("pnl").alias("pnl")).collect()
+    )
+    n = 1 + max((r["scenario_idx"] for r in rows), default=-1)
+    out: dict[tuple, np.ndarray] = {}
+    for r in rows:
+        key = (r["window"], *(r[d] for d in dims))
+        out.setdefault(key, np.full(n, np.nan))[r["scenario_idx"]] = r["pnl"]
+    return out
+
+
+def _expected_vector_rows(
+    measure: Measure, spec: AggregationSpec, org: tuple[str, ...], vectors: dict
+) -> dict[tuple, float]:
+    """``{(measure name, node_level, node key): value}`` a spec should have stored.
+
+    ``vectors[node_level]`` holds that level's node vectors; ``node key`` is the tuple of the
+    level's dimension values. Diversification rows pair consecutive org levels of the spec,
+    shortest first, as the engine does.
     """
-    name = "pnl_scenarios_firm_sum_matches_risk_metrics"
+    window = measure.params["window"]
+    out: dict[tuple, float] = {}
+    for gs in unique_sets(spec.grouping_sets):
+        level = node_level(gs)
+        for (w, *key), vec in vectors[level].items():
+            if w == window:
+                out[(measure.name, level, tuple(key))] = _vector_value(measure, vec)
+    if not spec.diversification:
+        return out
+    by_len = {len(gs): tuple(gs) for gs in spec.grouping_sets if tuple(gs) == org[: len(gs)]}
+    levels = [by_len[k] for k in sorted(by_len)]
+    for parent, child in itertools.pairwise(levels):
+        p_level, c_level = node_level(parent), node_level(child)
+        parents = {tuple(k): v for (w, *k), v in vectors[p_level].items() if w == window}
+        children = {tuple(k): v for (w, *k), v in vectors[c_level].items() if w == window}
+        for pkey, pvec in parents.items():
+            standalone = sum(
+                _vector_value(measure, c) for ckey, c in children.items()
+                if ckey[: len(pkey)] == pkey
+            )  # fmt: skip
+            out[(f"{measure.name}__sum_children", p_level, pkey)] = standalone
+            out[(f"{measure.name}__diversification", p_level, pkey)] = (
+                standalone - _vector_value(measure, pvec)
+            )
+        for ckey, cvec in children.items():
+            pvec = parents[ckey[: len(parent)]]
+            out[(f"{measure.name}__incremental", c_level, ckey)] = _vector_value(
+                measure, pvec
+            ) - _vector_value(measure, pvec - cvec)
+    return out
+
+
+def check_vector_measures_from_pnl_scenarios(ctx: RunContext, spark: SparkSession) -> Check:
+    """Every vector-measure row in ``risk_metrics`` equals a recomputation from ``pnl_scenarios``.
+
+    That covers each measure at every node of its specification, and the ``__sum_children``,
+    ``__diversification`` and ``__incremental`` rows. The curated P&L is summed in Spark once
+    per (node level, filter set), with the specification's filters applied, and the quantile
+    convention of ``conventions.py`` is applied in NumPy; the diversification rows are rebuilt
+    here, not by the engine's code. Rows missing from or extra to ``risk_metrics`` fail too.
+    """
+    name = "vector_measures_match_pnl_scenarios"
     model = load_model()
-    metrics = (
+    specs = {s.name: s for s in load_specs(None, model)}
+    vector = {m for m, v in model.measures.items() if v.measure_class == "vector"}
+    names = [*vector, *(f"{m}__{d}" for m in vector for d in _DERIVED)]
+    stored_rows = (
         spark.read.parquet(str(ctx.curated("risk_metrics")))
-        .where((F.col("node_level") == "firm_id") & ~F.col("measure").contains("__"))
-        .select("measure", "value")
+        .where(F.col("measure").isin(names))
         .collect()
     )
-    firm = (
-        spark.read.parquet(str(ctx.curated("pnl_scenarios")))
-        .groupBy("window", "scenario_idx")
-        .agg(F.sum("pnl").alias("pnl"))
-        .orderBy("window", "scenario_idx")
-        .collect()
-    )
-    vectors: dict[str, list[float]] = {}
-    for r in firm:
-        vectors.setdefault(r["window"], []).append(r["pnl"])
-    problems, checked = [], 0
-    for r in metrics:
-        measure = model.measures.get(r["measure"])
-        if measure is None or measure.measure_class != "vector":
+    stored = {
+        (r["aggregation"], r["measure"], r["node_level"],
+         tuple(r[d] for d in r["node_level"].split("|"))): r["value"]
+        for r in stored_rows
+    }  # fmt: skip
+    problems: list[str] = []
+    expected: dict[tuple, float] = {}
+    pnl = spark.read.parquet(str(ctx.curated("pnl_scenarios")))
+    cache: dict[tuple, dict] = {}
+    for agg in sorted({k[0] for k in stored}):
+        spec = specs.get(agg)
+        if spec is None or spec.measure not in vector:
+            problems.append(f"aggregation '{agg}' is not a vector specification")
             continue
-        pnl = np.array(vectors.get(measure.params["window"], []))
-        if pnl.size == 0:
-            problems.append(f"{measure.name}: no curated vector for {measure.params['window']}")
-            continue
-        fn = var_from_pnl if measure.function == "var" else es_from_pnl
-        expected = fn(pnl, float(measure.params["level"])) * math.sqrt(
-            float(measure.params.get("horizon_days", 1))
+        fkey = tuple(sorted(spec.filters.items()))
+        vectors = {}
+        for gs in unique_sets(spec.grouping_sets):
+            if (fkey, gs) not in cache:
+                cache[(fkey, gs)] = _node_vectors(pnl, list(gs), spec.filters)
+            vectors[node_level(gs)] = cache[(fkey, gs)]
+        rows = _expected_vector_rows(
+            model.measure(spec.measure), spec, model.hierarchies["org"], vectors
         )
-        checked += 1
-        if abs(r["value"] - expected) > TOLERANCE * max(1.0, abs(expected)):
-            problems.append(f"{measure.name}: stored {r['value']} vs recomputed {expected}")
-    ok = checked > 0 and not problems
-    detail = f"{checked} firm measures recomputed" + (
-        f"; {'; '.join(problems)}" if problems else ""
-    )
-    return Check(name, ok, detail)
+        expected |= {(agg, *k): v for k, v in rows.items()}
+    for key in sorted(set(stored) - set(expected)):
+        problems.append(f"{key}: stored but not expected")
+    for key in sorted(set(expected) - set(stored)):
+        problems.append(f"{key}: expected but not stored")
+    for key, exp in expected.items():
+        got = stored.get(key)
+        if got is not None and not abs(got - exp) <= TOLERANCE * max(1.0, abs(exp)):
+            problems.append(f"{key}: stored {got} vs recomputed {exp}")
+    detail = f"{len(expected)} vector-measure rows recomputed"
+    if problems:
+        detail += f"; {len(problems)} problems: " + "; ".join(problems[:5])
+    return Check(name, bool(expected) and not problems, detail)
 
 
 def check_no_duplicate_nodes(ctx: RunContext, spark: SparkSession) -> Check:
@@ -537,8 +622,8 @@ def check_ccar_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
 
 
 CHECKS: list[CheckFn] = [
-    check_firm_vector_is_sum_of_book_vectors,
-    check_firm_var_from_pnl_scenarios,
+    check_pnl_scenarios_match_raw_per_grain_cell,
+    check_vector_measures_from_pnl_scenarios,
     check_no_duplicate_nodes,
     check_stress_firm_pnl_is_sum_of_trades,
     check_frtb_sa_is_sum_of_components,

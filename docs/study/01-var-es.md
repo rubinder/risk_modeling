@@ -265,10 +265,6 @@ Marked `SIMPLIFICATION:` in the code:
 - **Linear P&L.** Scenario P&L is linear in the factor returns (exposure × return), not a
   full revaluation of each trade under each historical scenario
   (`make_pnl_vectors` in `src/riskagg/data/market.py`). Options in a bank are repriced.
-- **Firm reconciliation check.** The audit check that recomputes firm-level VaR and ES from
-  the curated `pnl_scenarios` assumes the firm-node row of a measure comes from an unfiltered
-  specification. A filtered firm node would need the filter applied in the check too
-  (`check_firm_var_from_pnl_scenarios` in `src/riskagg/engine/audit.py`).
 
 Also different from a bank, by the project's scope:
 
@@ -327,7 +323,9 @@ Also different from a bank, by the project's scope:
     `src/riskagg/serving/executors.py`, `RiskService` in `src/riskagg/serving/service.py`.
 12. **How do you prove a reported VaR is right and reproducible?** Every row carries the run
     id, as-of date and a hash of the specification and reference data. A manifest records
-    input checksums. Reconciliation checks recompute firm VaR from the curated vectors and
-    check the firm vector against the raw trades. Only a run that passes them is marked
-    official and served. Code: `reconcile` and `check_firm_var_from_pnl_scenarios` in
-    `src/riskagg/engine/audit.py`, `mark_official` in `src/riskagg/context.py`.
+    input checksums. Reconciliation checks recompute every stored VaR and ES row (each node,
+    with its diversification rows) from the curated vectors, and check every curated vector
+    cell against the raw trades. Only a run that passes them is marked official and served.
+    Code: `reconcile`, `check_vector_measures_from_pnl_scenarios` and
+    `check_pnl_scenarios_match_raw_per_grain_cell` in `src/riskagg/engine/audit.py`,
+    `mark_official` in `src/riskagg/context.py`.

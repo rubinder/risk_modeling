@@ -77,25 +77,32 @@ def test_run_curates_and_writes_manifest(spark, generated, tmp_path):
     assert official_run(root, datetime.date(2026, 11, 12)) == run_id
 
     model = load_model()
-    for table in ("risk_metrics", "pnl_scenarios"):
+    manifest = json.loads((root / "runs" / run_id / "manifest.json").read_text())
+    assert len(model.tables) == 6
+    for table in model.tables:  # every curated table: run id, date and spec hash on every row
         df = spark.read.parquet(str(root / "curated" / table))
-        assert set(df.columns) == set(model.tables[table]["columns"])
-        assert df.select("run_id").distinct().collect()[0].run_id == run_id
+        assert set(df.columns) == set(model.tables[table]["columns"]), table
+        assert {"as_of_date", "run_id", "spec_hash"} <= set(df.columns), table
+        assert [tuple(r) for r in df.select("run_id", "spec_hash").distinct().collect()] == [
+            (run_id, manifest["spec_hash"])
+        ], table
+        assert df.where(F.col("spec_hash").isNull()).count() == 0, table
     metrics = spark.read.parquet(str(root / "curated/risk_metrics"))
-    assert metrics.select("spec_hash").distinct().count() == 1
     assert dict(metrics.dtypes)["as_of_date"] == "date"
 
-    manifest = json.loads((root / "runs" / run_id / "manifest.json").read_text())
     assert manifest["run_id"] == run_id and manifest["profile"] == "tiny"
     assert manifest["as_of_date"] == AS_OF and manifest["n_scenarios"] == 20
-    assert manifest["spec_hash"] == metrics.select("spec_hash").first().spec_hash
     assert manifest["spark_version"] == spark.version and manifest["git_commit"]
     assert manifest["spark_conf"]["spark.sql.session.timeZone"] == "UTC"
+    # every raw dataset a measure reads (only `exposures`, an input of the generator, is not)
     assert set(manifest["inputs"]) == {
-        "hierarchy", "pnl_vectors", "default_risk_positions", "banking_book", "macro_scenarios",
-        "capital_start",
+        "hierarchy", "pnl_vectors", "sensitivities", "trades", "risk_factors",
+        "default_risk_positions", "banking_book", "macro_scenarios", "capital_start",
     }  # fmt: skip
     assert manifest["inputs"]["hierarchy"]["rows"] == 6
+    assert manifest["inputs"]["trades"]["rows"] == 20
+    for name, entry in manifest["inputs"].items():
+        assert entry["rows"] > 0 and entry["checksum"] not in ("", "0"), name
     assert manifest["reconciliation"]["passed"] is True
     assert len(manifest["reconciliation"]["checks"]) == len(audit.CHECKS)
 
@@ -166,15 +173,124 @@ def _corrupt_leaf(leaf):
     path.with_name(f".{path.name}.crc").unlink(missing_ok=True)  # Hadoop rejects a stale checksum
 
 
-def test_reconcile_detects_corrupted_grain(spark, generated, tmp_path):
-    root = _fresh_root(generated, tmp_path)
-    assert _invoke("run", root).exit_code == 0
-    run_id = official_run(root, datetime.date(2026, 11, 12))
-    ctx = RunContext("tiny", datetime.date(2026, 11, 12), run_id, "x", root)
-    assert all(c.passed for c in audit.reconcile(ctx, spark))
-    _corrupt_one_value(root)
-    failed = {c.name for c in audit.reconcile(ctx, spark) if not c.passed}
-    assert "firm_vector_equals_sum_of_book_vectors" in failed
+@pytest.fixture(scope="module")
+def official(spark, generated, tmp_path_factory):
+    """One official tiny run; corruption tests work on copies of its root."""
+    root = _fresh_root(generated, tmp_path_factory.mktemp("official"))
+    result = _invoke("run", root)
+    assert result.exit_code == 0, result.output
+    return root
+
+
+def _copy_run(official, tmp_path):
+    import shutil
+
+    root = tmp_path / "root"
+    shutil.copytree(official, root)
+    as_of = datetime.date.fromisoformat(AS_OF)
+    return RunContext("tiny", as_of, official_run(root, as_of), "x", root)
+
+
+def _rewrite_leaf(leaf, change):
+    """Rewrite a run partition as one Parquet file holding ``change(rows)`` (a pandas frame)."""
+    import pyarrow as pa
+
+    files = sorted(leaf.glob("part-*.parquet"))
+    table = pa.concat_tables([pq.read_table(p) for p in files])
+    rows = change(table.to_pandas())
+    for p in files:
+        p.unlink()
+        p.with_name(f".{p.name}.crc").unlink(missing_ok=True)
+    out = pa.Table.from_pandas(rows, schema=table.schema, preserve_index=False)
+    pq.write_table(out, leaf / "part-00000-rewritten.parquet")
+
+
+def _failed(checks):
+    return {c.name for c in checks if not c.passed}
+
+
+GRAIN_KEY = ["book_id", "asset_class", "currency", "risk_class", "window", "scenario_idx"]
+
+
+def test_reconcile_detects_corrupted_grain(spark, official, tmp_path):
+    ctx = _copy_run(official, tmp_path)
+    assert _failed(audit.reconcile(ctx, spark)) == set()
+    _corrupt_one_value(ctx.root)
+    assert "pnl_scenarios_equal_raw_per_grain_cell" in _failed(audit.reconcile(ctx, spark))
+
+
+def _move_pnl_between_books(rows):
+    """+1000 on one book, -1000 on another, same window and scenario: the firm total is kept."""
+    cell = rows[(rows.window == "CURRENT") & (rows.scenario_idx == 0)].sort_values(GRAIN_KEY)
+    first = cell.index[0]
+    other = cell[cell.book_id != cell.loc[first, "book_id"]].index[0]
+    rows.loc[first, "pnl"] += 1000.0
+    rows.loc[other, "pnl"] -= 1000.0
+    return rows
+
+
+def _relabel_desk(rows):
+    """One row's desk_id changed to another desk's: every total is kept."""
+    first = rows.sort_values(GRAIN_KEY).index[0]
+    rows.loc[first, "desk_id"] = min(set(rows.desk_id) - {rows.loc[first, "desk_id"]})
+    return rows
+
+
+@pytest.mark.parametrize("change", [_move_pnl_between_books, _relabel_desk])
+def test_reconcile_detects_pnl_moved_within_the_firm(spark, official, tmp_path, change):
+    ctx = _copy_run(official, tmp_path)
+    _rewrite_leaf(ctx.curated("pnl_scenarios"), change)
+    firm = (
+        spark.read.parquet(str(ctx.curated("pnl_scenarios")))
+        .groupBy("window", "scenario_idx").agg(F.sum("pnl").alias("pnl"))
+    )  # fmt: skip
+    raw = (
+        spark.read.parquet(str(ctx.raw("pnl_vectors")))
+        .select("window", F.posexplode("pnl").alias("scenario_idx", "pnl"))
+        .groupBy("window", "scenario_idx").agg(F.sum("pnl").alias("raw"))
+    )  # fmt: skip
+    worst = firm.join(raw, ["window", "scenario_idx"]).agg(F.max(F.abs(F.col("pnl") - F.col("raw"))))
+    assert worst.first()[0] < 1e-6  # the firm vector is unchanged
+    assert "pnl_scenarios_equal_raw_per_grain_cell" in _failed(audit.reconcile(ctx, spark))
+
+
+DESK = "firm_id|business_line_id|desk_id"
+BOOK = f"{DESK}|book_id"
+
+
+def _bump(measure, level):
+    def change(rows):
+        hit = rows[(rows.measure == measure) & (rows.node_level == level)].sort_values("desk_id")
+        rows.loc[hit.index[0], "value"] += 1000.0
+        return rows
+
+    return change
+
+
+def _drop(measure, level):
+    def change(rows):
+        hit = rows[(rows.measure == measure) & (rows.node_level == level)].sort_values("desk_id")
+        return rows.drop(index=hit.index[0])
+
+    return change
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        _bump("var_99_1d", DESK),
+        _bump("var_99_1d", "desk_id|asset_class"),
+        _bump("var_99_1d__sum_children", "firm_id"),
+        _bump("var_99_1d__diversification", "firm_id|business_line_id"),
+        _bump("var_99_1d__incremental", BOOK),
+        _drop("var_99_1d", DESK),
+    ],
+    ids=["desk", "desk_asset_class", "sum_children", "diversification", "incremental", "missing"],
+)
+def test_reconcile_recomputes_every_stored_vector_measure(spark, official, tmp_path, change):
+    ctx = _copy_run(official, tmp_path)
+    _rewrite_leaf(ctx.curated("risk_metrics"), change)
+    assert _failed(audit.reconcile(ctx, spark)) == {"vector_measures_match_pnl_scenarios"}
 
 
 def test_run_exits_nonzero_and_keeps_official_when_reconcile_fails(
