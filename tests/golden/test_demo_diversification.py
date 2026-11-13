@@ -69,6 +69,18 @@ def _third_worst(v: np.ndarray) -> int:
     return int(np.argsort(v, kind="stable")[2])  # VaR 99% of 250 is the 3rd-worst loss
 
 
+# Scenarios worse than the ranked one in the stressed window, shared by the firm and every
+# business line: with the same ranked scenario, this is what makes VaR add exactly.
+STRESSED_WORSE = [208, 151]
+
+
+def test_stressed_tail_is_shared(demo):
+    vectors, _, _, _ = demo
+    bls = vectors["STRESSED"]
+    for name, v in [("FIRM", sum(bls.values())), *bls.items()]:
+        assert [int(i) for i in np.argsort(v, kind="stable")[:2]] == STRESSED_WORSE, name
+
+
 def test_business_lines_are_comonotonic(demo):
     vectors, _, _, _ = demo
     for window, (firm_bn, sum_bn, pct, firm_scen, bl_scen) in WINDOWS.items():
@@ -97,5 +109,6 @@ def test_page_quotes_these_numbers():
         for literal in (firm_bn, sum_bn, pct, f"scenario {firm_scen}"):
             assert literal in text, literal
     for literal in (MIN_CORRELATION, NET_LONG_SHARE, NET_OVER_GROSS, f"{N_FACTORS} risk factors",
-                    f"{TRADES_PER_BOOK} trades", "scenario 78"):  # fmt: skip
+                    f"{TRADES_PER_BOOK} trades", "scenario 78",
+                    f"scenarios {STRESSED_WORSE[0]} and {STRESSED_WORSE[1]}"):  # fmt: skip
         assert literal in text, literal

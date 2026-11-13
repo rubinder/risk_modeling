@@ -112,10 +112,14 @@ long (`make_trades` in `src/riskagg/data/org.py`, `LONG_SHARE` in
 `src/riskagg/data/market.py`), and holds about 500 trades. So books are net long in 84% of
 (book, risk factor) pairs, with a median net exposure of 44% of gross, and
 every business line's P&L vector is close to a scaled copy of the firm's (correlation above
-0.999). Their losses are **comonotonic**: the same scenario is the ranked loss for every
-child. In the stressed window scenario 64 is the third-worst loss (the 99% VaR of 250
-scenarios) of the firm and of all four business lines, and when the same scenario is the
-ranked loss of every child, VaR adds exactly. In the current window the firm's third-worst is
+0.999). Their losses are **comonotonic in the tail**: the children rank the scenarios the same
+way. VaR adds exactly when every child has the same ranked scenario *and* the same scenarios
+worse than it: then on each of those worse scenarios every child loses at least its VaR, on
+every other scenario at most its VaR, so the parent's ranked loss is that scenario and its
+loss is the sum (the same ranked scenario alone is not enough). In the stressed window that
+is what happens: for the firm and all four business lines scenario 64 is the third-worst loss
+(the 99% VaR of 250 scenarios) and scenarios 208 and 151 are the two worse ones. In the
+current window the firm's third-worst is
 scenario 84, as for three business lines, but BL01's is scenario 78; that one difference is
 the whole benefit. A real bank's desks hold different and often offsetting positions (a desk
 hedging another, market makers both long and short), so the benefit between desks is usually
