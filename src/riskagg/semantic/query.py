@@ -20,6 +20,7 @@ from riskagg.semantic.model import Measure, SemanticModel, SpecError
 Kind = Literal["additive", "vector_scenarios", "lookup"]
 
 VECTOR_TABLE = "pnl_scenarios"  # per-scenario P&L sums, at the grain
+ROW_COUNT = "row_count"  # companion column that tells an empty total from a real one
 MAX_ROWS = 10_000_000  # Pinot truncates to 10 rows unless a LIMIT is given
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _RESERVED = {"window", "value"}  # reserved words in Pinot's SQL dialect: always double-quoted
@@ -55,6 +56,13 @@ class Query:
         return "pnl" if self.kind == "vector_scenarios" else "value"
 
     @property
+    def needs_row_count(self) -> bool:
+        """A total (aggregate, no group-by) returns one row even over no rows in SQL."""
+        return (
+            self.aggregate is not None and not self.select_dims and self.kind != "vector_scenarios"
+        )
+
+    @property
     def columns(self) -> list[str]:
         """Columns of the rows an executor returns, in order."""
         extra = ["scenario_idx"] if self.kind == "vector_scenarios" else []
@@ -69,7 +77,10 @@ class Query:
             measure_sql = f"SUM({_ident(col)}) AS {_ident(self.value_column, quote=True)}"
         else:
             measure_sql = _ident("value", quote=True)
-        select = ", ".join([*(_ident(d) for d in group), measure_sql])
+        selected = [*(_ident(d) for d in group), measure_sql]
+        if self.needs_row_count:
+            selected.append(f"COUNT(*) AS {_ident(ROW_COUNT, quote=True)}")
+        select = ", ".join(selected)
         where = " AND ".join(
             f"{_ident(col)} IN ({', '.join(_literal(v) for v in values)})"
             for col, values in self.filters.items()
@@ -185,6 +196,7 @@ def finish(query: Query, rows: pd.DataFrame) -> pd.DataFrame:
     if rows.empty:
         return pd.DataFrame(columns=out_cols)
     dims = list(query.select_dims)
+    _require_complete(rows, dims)
     groups = rows.groupby(dims, sort=True) if dims else [((), rows)]
     records = []
     for key, g in groups:
@@ -192,3 +204,27 @@ def finish(query: Query, rows: pd.DataFrame) -> pd.DataFrame:
         pnl = g.sort_values("scenario_idx")["pnl"].to_numpy(dtype=float)
         records.append((*key, fn(pnl, level) * scale))
     return pd.DataFrame.from_records(records, columns=out_cols)
+
+
+def _require_complete(rows: pd.DataFrame, dims: list[str]) -> None:
+    """Every group must hold scenarios 0..n-1 exactly once, the same n everywhere.
+
+    A truncated or partial result would otherwise give a wrong quantile without an error.
+    """
+    groups = rows.groupby(dims, sort=True) if dims else [((), rows)]
+    sizes: dict[object, int] = {}
+    for key, g in groups:
+        idx = g["scenario_idx"]
+        n = len(idx)
+        if not (idx.nunique() == n == idx.max() + 1):
+            raise QueryError(
+                f"incomplete scenario set for group {key!r}: {n} scenarios, "
+                f"{idx.nunique()} distinct, max index {idx.max()}"
+            )
+        sizes[key] = n
+    if len(set(sizes.values())) > 1:
+        group, n = min(sizes.items(), key=lambda kv: kv[1])
+        raise QueryError(
+            f"incomplete scenario set for group {group!r}: {n} scenarios, "
+            f"others have {max(sizes.values())}"
+        )

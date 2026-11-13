@@ -8,7 +8,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.dataset as ds
 
-from riskagg.semantic.query import Query
+from riskagg.semantic.query import MAX_ROWS, Query
 
 PARTITION_SCHEMA = pa.schema([("as_of_date", pa.string()), ("run_id", pa.string())])
 
@@ -62,9 +62,20 @@ class PinotExecutor:
         if body.get("exceptions"):
             messages = "; ".join(str(e.get("message", e)) for e in body["exceptions"])
             raise PinotError(f"Pinot query failed: {messages}")
+        for flag in ("numGroupsLimitReached", "partialResult"):
+            if body.get(flag):
+                raise PinotError(f"Pinot result is incomplete ({flag} is true)")
         table = body["resultTable"]
+        rows = table["rows"]
+        if len(rows) >= MAX_ROWS:
+            raise PinotError(f"Pinot hit the row limit ({MAX_ROWS}); the result is truncated")
         columns = query.columns
         names = table["dataSchema"]["columnNames"]
-        if len(names) != len(columns):
+        if query.needs_row_count:
+            # SQL gives a total over no rows as one row with a null sum: drop it.
+            if len(names) != len(columns) + 1:
+                raise PinotError(f"Pinot returned columns {names}, expected {columns} + count")
+            rows = [r[:-1] for r in rows if r[-1]]
+        elif len(names) != len(columns):
             raise PinotError(f"Pinot returned columns {names}, expected {columns}")
-        return pd.DataFrame(table["rows"], columns=columns)
+        return pd.DataFrame(rows, columns=columns)

@@ -328,3 +328,77 @@ def test_table_config(model, mini_model):
         "starTreeIndexConfigs"
         not in pinot_table_config(mini_model, "risk_metrics")["tableIndexConfig"]
     )
+
+
+def _vector_rows(dims_rows):
+    return pd.DataFrame(dims_rows, columns=["desk_id", "scenario_idx", "pnl"])
+
+
+def test_finish_requires_complete_scenario_sets(model):
+    q = build_query(model, "var_99_1d", ["desk_id"], {}, D, R)
+    full = [("a", i, float(i)) for i in range(5)]
+    assert len(finish(q, _vector_rows(full))) == 1
+    with pytest.raises(QueryError, match="'b'.*4 scenarios"):  # gap: 0,1,2,4
+        finish(q, _vector_rows(full + [("b", i, 1.0) for i in (0, 1, 2, 4)]))
+    with pytest.raises(QueryError, match="'b'"):  # duplicate scenario
+        finish(q, _vector_rows(full + [("b", i, 1.0) for i in (0, 1, 2, 3, 3)]))
+    with pytest.raises(QueryError, match="'b'.*3 scenarios"):  # shorter than the other group
+        finish(q, _vector_rows(full + [("b", i, 1.0) for i in range(3)]))
+    total = build_query(model, "var_99_1d", [], {}, D, R)
+    with pytest.raises(QueryError, match="scenario"):
+        finish(total, pd.DataFrame({"scenario_idx": [0, 2], "pnl": [1.0, 2.0]}))
+
+
+def test_finish_empty_vector_result_has_right_columns(model):
+    for dims in (["desk_id"], []):
+        q = build_query(model, "var_99_1d", dims, {}, D, R)
+        out = finish(q, pd.DataFrame(columns=q.columns))
+        assert out.empty and list(out.columns) == [*dims, "value"]
+
+
+@pytest.mark.parametrize("flag", ["numGroupsLimitReached", "partialResult"])
+def test_pinot_executor_refuses_truncated_results(model, flag):
+    def handler(request):
+        return httpx.Response(200, json={flag: True, "resultTable": {
+            "dataSchema": {"columnNames": ["desk_id", "scenario_idx", "pnl"]},
+            "rows": [["d1", 0, 1.0]]}})  # fmt: skip
+
+    q = build_query(model, "var_99_1d", ["desk_id"], {}, D, R)
+    with pytest.raises(PinotError, match=flag):
+        _pinot(handler).execute(q)
+
+
+def test_pinot_executor_refuses_row_limit_hit(model, monkeypatch):
+    monkeypatch.setattr("riskagg.serving.executors.MAX_ROWS", 2)
+    rows = [["d1", 0, 1.0], ["d1", 1, 1.0]]
+
+    def handler(request):
+        return httpx.Response(200, json={"resultTable": {
+            "dataSchema": {"columnNames": ["desk_id", "scenario_idx", "pnl"]}, "rows": rows}})  # fmt: skip
+
+    q = build_query(model, "var_99_1d", ["desk_id"], {}, D, R)
+    with pytest.raises(PinotError, match="row limit"):
+        _pinot(handler).execute(q)
+
+
+def test_empty_total_is_same_on_both_backends(mini_model, tmp_path):
+    q = build_query(mini_model, "notional", [], {}, D, R)
+    assert "COUNT(*) AS row_count" in q.to_pinot_sql()
+
+    def handler(count):
+        def respond(request):
+            return httpx.Response(200, json={"resultTable": {
+                "dataSchema": {"columnNames": ["value", "row_count"]},
+                "rows": [[None if count == 0 else 5.0, count]]}})  # fmt: skip
+
+        return respond
+
+    empty = _pinot(handler(0)).execute(q)
+    assert empty.empty and list(empty.columns) == ["value"]
+    full = _pinot(handler(2)).execute(q)
+    assert list(full.columns) == ["value"] and list(full.value) == [5.0]
+    leaf = tmp_path / "curated/positions/as_of_date=2026-11-12/run_id=other"
+    leaf.mkdir(parents=True)
+    pd.DataFrame({"notional": [1.0]}).to_parquet(leaf / "p.parquet")
+    pandas_empty = PandasExecutor(tmp_path).execute(q)
+    assert pandas_empty.empty and list(pandas_empty.columns) == list(empty.columns)
