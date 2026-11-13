@@ -73,7 +73,7 @@ CASCADE = {
     "rs": (3489718, 114030, 114030, 3782),
 }
 LH_ES = {"fc": 1241753, "rc": 908812, "rs": 3495306}
-RATIO = "1.3663"
+RATIO = "1.366347"
 ES_DESK002 = 4775800
 # risk class -> (es_fc, es_rc, es_rs, es)
 CLASS_ES = {
@@ -268,7 +268,7 @@ def test_ima_cascade_and_imcc(ima):
     assert {k: _money(getattr(row, f"es_{k}")) for k in LH_ES} == {
         k: _money(v) for k, v in LH_ES.items()
     }
-    assert f"{row.es_fc / row.es_rc:.4f}" == RATIO
+    assert f"{row.es_fc / row.es_rc:.6f}" == RATIO
     assert _money(row.es) == _money(ES_DESK002)
     for rc, values in CLASS_ES.items():
         r = ima["es"][(DESK, rc)]

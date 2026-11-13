@@ -12,7 +12,9 @@ Per node and per risk-class scope (each risk class alone, and ``*`` for all toge
    when ``ES_R,C`` is 0.
 5. ``IMCC = rho x IMCC(C) + (1 - rho) x sum_i IMCC(C_i)``, rho = 0.5 (MAR33.15), where
    IMCC(C) is step 4 for all risk classes together and IMCC(C_i) for risk class i alone
-   (MAR33.14: a partial ES with every other risk factor held constant).
+   (MAR33.14: a partial ES with every other risk factor held constant). MAR33.15 writes
+   IMCC(C_i) with the bare ratio ``ES_F,C,i / ES_R,C,i``; applying MAR33.6's floor at 1 to
+   each risk class's ratio too is this project's reading, and it can only raise the charge.
 
 Every node is recomputed from its own summed vectors, never rolled up from the nodes below:
 ES does not add, and the firm's unconstrained ES diversifies across desks.
@@ -87,6 +89,8 @@ def lh_adjusted_es(es_by_lh: Mapping[int, float]) -> float:
     ``es_by_lh[LH_j]`` is the ES of the factors whose liquidity horizon is at least LH_j
     (``es_by_lh[10]`` is the ES of all factors). A missing horizon counts as 0.
     """
+    # Each ES_j is squared, so a scope whose ES is negative (gains only in its tail) still
+    # gets a positive liquidity-adjusted ES, and so a positive charge.
     return math.sqrt(sum((es_by_lh.get(lh, 0.0) * w) ** 2 for lh, w in CASCADE_WEIGHTS.items()))
 
 
@@ -155,6 +159,7 @@ def ima_from_horizons(by_horizon: DataFrame) -> DataFrame:
         if c not in ("risk_class", "es_set", "liquidity_horizon", "es")
     ]
     weight = F.create_map(*[x for lh, w in CASCADE_WEIGHTS.items() for x in (F.lit(lh), F.lit(w))])
+    # Squared, as in ``lh_adjusted_es``: a negative ES_j still adds a positive term.
     term = F.pow(F.col("es") * weight[F.col("liquidity_horizon")], 2)
     sets = [
         F.sqrt(F.coalesce(F.sum(F.when(F.col("es_set") == name, term)), F.lit(0.0))).alias(

@@ -228,6 +228,16 @@ IMCC = ρ × IMCC(C) + (1 - ρ) × Σ_i IMCC(C_i),   ρ = 0.5
 
 The same stress period serves the portfolio and every risk class (MAR33.15).
 
+**This project's reading of the floor.** MAR33.15 writes `IMCC(C_i)` as
+`ES_R,S,i × ES_F,C,i / ES_R,C,i`, the bare ratio; the floor at 1 appears in MAR33.6 for the
+portfolio's ES. The project applies that floor to each risk class's ratio as well (`scaled_es`
+in `src/riskagg/measures/frtb_ima.py`). This is a reading, not the text, and it can only raise
+the charge: where a class's ratio is below 1 the floored figure is larger than the bare one.
+
+**A scope with only gains still has a charge.** The cascade squares each `ES_j` before
+summing (section 3.2), so a scope whose ES is negative (its worst 2.5% of scenarios are
+gains) still gets a positive liquidity-adjusted ES, and a positive contribution to the IMCC.
+
 ### 3.5 Explained but not built
 
 **Non-modellable risk factors (NMRF).** A factor is modellable only if it passes the **risk
@@ -332,7 +342,8 @@ read through the drill-down endpoint.
 
 The `tiny` profile has three desks: DESK001 and DESK002 in BL01, DESK003 in BL02. Money is in
 USD rounded to whole dollars and computed unrounded, so a figure may differ by 1 from the sum
-or product of rounded figures shown beside it.
+or product of rounded figures shown beside it. Ratios that multiply money are printed to six
+decimals so that the product shown stays within that rounding.
 
 ### 5.1 One SBM bucket: DESK002, GIRR delta, USD
 
@@ -446,8 +457,8 @@ ES_F,C = sqrt( 1,238,368² + (52,871 × √1)² + (52,871 × √2)² + (2,125 ×
 The longer horizons add little here because the long-horizon factors are small; a desk
 dominated by volatility or credit positions would look different.
 
-Stress calibration: the ratio `ES_F,C / ES_R,C` = 1,241,753 / 908,812 = **1.3663** (above 1,
-so the floor does not bind), and `ES` = 3,495,306 × 1.3663 = **4,775,800**.
+Stress calibration: the ratio `ES_F,C / ES_R,C` = 1,241,753 / 908,812 = **1.366347** (above
+1, so the floor does not bind), and `ES` = 3,495,306 × 1.366347 = **4,775,800**.
 
 Per risk class alone (each also cascaded and stress-scaled):
 
