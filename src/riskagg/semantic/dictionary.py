@@ -107,7 +107,7 @@ def _measure(model: SemanticModel, m: Measure, specs: Sequence[AggregationSpec])
     if m.params:
         rows.append(_row("Parameters", ", ".join(f"{k} {v}" for k, v in m.params.items())))
     if m.measure_class == "vector":
-        source = f"queries: `{model.vector_table}`; stored rows: `{m.table}` (see below)"
+        source = f"queries: `{model.vector_table}`; precomputed nodes: `{m.table}`"
     else:
         source = f"`{m.table}`"
     rows.append(_row("Answered from", source))

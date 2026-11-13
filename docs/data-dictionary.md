@@ -26,7 +26,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | vector |
 | Parameters | level 0.99, window CURRENT, horizon_days 1 |
-| Answered from | queries: `pnl_scenarios`; stored rows: `risk_metrics` (see below) |
+| Answered from | queries: `pnl_scenarios`; precomputed nodes: `risk_metrics` |
 | Precomputed | in `risk_metrics` by `var_by_org` at (`firm_id`); (`firm_id`, `business_line_id`); (`firm_id`, `business_line_id`, `desk_id`); (`firm_id`, `business_line_id`, `desk_id`, `book_id`), with derived rows `var_99_1d__sum_children`, `var_99_1d__diversification`, `var_99_1d__incremental`; and `var_by_desk_asset_class` at (`desk_id`, `asset_class`) |
 | May be queried by | any subset of: `firm_id`, `business_line_id`, `desk_id`, `book_id`, `legal_entity`, `region`, `asset_class`, `currency`, `risk_class` |
 | Rule for combining | Never summed. The P&L of the slice is summed scenario by scenario from `pnl_scenarios` (CURRENT window), then the VaR at 0.99 is taken of each group's vector (`src/riskagg/conventions.py`). |
@@ -40,7 +40,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | vector |
 | Parameters | level 0.99, window CURRENT, horizon_days 10 |
-| Answered from | queries: `pnl_scenarios`; stored rows: `risk_metrics` (see below) |
+| Answered from | queries: `pnl_scenarios`; precomputed nodes: `risk_metrics` |
 | Precomputed | in `risk_metrics` by `var_10d_by_org` at (`firm_id`); (`firm_id`, `business_line_id`); (`firm_id`, `business_line_id`, `desk_id`); (`firm_id`, `business_line_id`, `desk_id`, `book_id`), with derived rows `var_99_10d__sum_children`, `var_99_10d__diversification`, `var_99_10d__incremental` |
 | May be queried by | any subset of: `firm_id`, `business_line_id`, `desk_id`, `book_id`, `legal_entity`, `region`, `asset_class`, `currency`, `risk_class` |
 | Rule for combining | Never summed. The P&L of the slice is summed scenario by scenario from `pnl_scenarios` (CURRENT window), then the VaR at 0.99 is taken of each group's vector (`src/riskagg/conventions.py`). Scaled by sqrt(10) to the horizon. |
@@ -54,7 +54,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | vector |
 | Parameters | level 0.975, window CURRENT, horizon_days 1 |
-| Answered from | queries: `pnl_scenarios`; stored rows: `risk_metrics` (see below) |
+| Answered from | queries: `pnl_scenarios`; precomputed nodes: `risk_metrics` |
 | Precomputed | in `risk_metrics` by `es_by_org` at (`firm_id`); (`firm_id`, `business_line_id`); (`firm_id`, `business_line_id`, `desk_id`); (`firm_id`, `business_line_id`, `desk_id`, `book_id`), with derived rows `es_975_1d__sum_children`, `es_975_1d__diversification`, `es_975_1d__incremental` |
 | May be queried by | any subset of: `firm_id`, `business_line_id`, `desk_id`, `book_id`, `legal_entity`, `region`, `asset_class`, `currency`, `risk_class` |
 | Rule for combining | Never summed. The P&L of the slice is summed scenario by scenario from `pnl_scenarios` (CURRENT window), then the ES at 0.975 is taken of each group's vector (`src/riskagg/conventions.py`). |
@@ -68,7 +68,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | vector |
 | Parameters | level 0.99, window STRESSED, horizon_days 1 |
-| Answered from | queries: `pnl_scenarios`; stored rows: `risk_metrics` (see below) |
+| Answered from | queries: `pnl_scenarios`; precomputed nodes: `risk_metrics` |
 | Precomputed | in `risk_metrics` by `svar_by_org` at (`firm_id`); (`firm_id`, `business_line_id`); (`firm_id`, `business_line_id`, `desk_id`); (`firm_id`, `business_line_id`, `desk_id`, `book_id`), with derived rows `svar_99_1d__sum_children`, `svar_99_1d__diversification`, `svar_99_1d__incremental` |
 | May be queried by | any subset of: `firm_id`, `business_line_id`, `desk_id`, `book_id`, `legal_entity`, `region`, `asset_class`, `currency`, `risk_class` |
 | Rule for combining | Never summed. The P&L of the slice is summed scenario by scenario from `pnl_scenarios` (STRESSED window), then the VaR at 0.99 is taken of each group's vector (`src/riskagg/conventions.py`). |
