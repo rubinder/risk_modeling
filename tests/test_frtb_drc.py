@@ -18,7 +18,7 @@ from riskagg.measures.frtb_drc import (
     load_drc_ref,
     rrao,
 )
-from riskagg.measures.frtb_sa import attach_org
+from riskagg.measures.frtb_sa import attach_org, charges_from_detail, load_frtb_ref, sbm_total
 from riskagg.semantic.pinot_schema import pinot_schema, pinot_table_config
 from riskagg.serving.api import create_app
 from riskagg.serving.service import RiskService
@@ -228,8 +228,25 @@ def test_detail_table_curated_at_both_levels(spark, tmp_run):
     assert {r[0] for r in df.select("corr_scenario").distinct().collect()} == {
         "LOW", "MEDIUM", "HIGH"
     }  # fmt: skip
-    # Each node's binding SBM charge is rebuilt from that node's own detail, not from desks.
     assert df.where("k_b < 0").count() == 0
+    # The stored SBM charge of every node equals the binding scenario's total rebuilt from that
+    # node's own curated detail (not from any other level).
+    stored = {
+        (r["node_level"], r["desk_id"]): r["value"]
+        for r in spark.read.parquet(str(ctx.curated("risk_metrics")))
+        .where("measure = 'frtb_sbm_charge'")
+        .collect()
+    }
+    for level, cols in (("firm_id", ["firm_id"]), ("firm_id|business_line_id|desk_id", DESK)):
+        node = df.where(F.col("node_level") == level).select(
+            *cols, "risk_class", "component", "bucket", "corr_scenario", "k_b", "s_b"
+        )
+        rebuilt = sbm_total(charges_from_detail(node, load_frtb_ref())).where("is_binding")
+        got = {(level, r["desk_id"] if "desk_id" in cols else "*"): r["charge"]
+               for r in rebuilt.collect()}  # fmt: skip
+        assert got.keys() == {k for k in stored if k[0] == level}
+        for key, value in got.items():
+            assert stored[key] == pytest.approx(value, rel=1e-9, abs=1e-9), key
 
 
 def test_registry_and_shipped_specs():
@@ -286,3 +303,73 @@ def test_sbm_total_reused_by_level(spark):
     assert a.total.count() >= 3
     inputs.release()
     assert inputs._frtb_levels == {}
+
+
+def test_nodes_are_recomputed_not_rolled_up_through_the_run_path(spark):
+    """Two desks hold offsetting positions; the firm rows come from netting at firm level.
+
+    Desk D1: long 100 senior BBB issuer X (JTD 75, DRC 75 x 6% = 4.5), EQ bucket 5 delta +100
+    (WS 30, SBM 30), exotic trade of 1,000,000 (RRAO 10,000). Desk D2: short 100 senior BBB
+    issuer X (no long: DRC 0), EQ bucket 5 delta -100 (SBM 30). Firm: X nets to 0, DRC 0; the
+    deltas cancel, SBM 0; RRAO 10,000 (additive). Desk sums would be DRC 4.5 and SBM 60.
+    """
+    from riskagg.engine.inputs import RunInputs
+    from riskagg.engine.runner import MEASURE_REGISTRY
+    from riskagg.engine.spec import load_specs
+    from riskagg.semantic.model import load_model
+
+    hierarchy = spark.createDataFrame(
+        [("B1", "D1", "BL1", "FIRM"), ("B2", "D2", "BL1", "FIRM")],
+        "book_id string, desk_id string, business_line_id string, firm_id string",
+    )
+    sens = spark.createDataFrame(
+        [(1, "B1", "EQ.5.A", "EQ", "DELTA", "5", None, 100.0, 0.0, 0.0, 0.0, 0.0),
+         (2, "B2", "EQ.5.A", "EQ", "DELTA", "5", None, -100.0, 0.0, 0.0, 0.0, 0.0)],
+        "trade_id long, book_id string, risk_factor_id string, risk_class string, "
+        "factor_type string, bucket string, tenor_years double, delta double, gamma double, "
+        "vega double, curvature_up double, curvature_down double",
+    )  # fmt: skip
+    trades = spark.createDataFrame(
+        [(1, "B1", 1_000_000.0, True), (2, "B2", 5_000_000.0, False)],
+        "trade_id long, book_id string, notional double, is_exotic boolean",
+    )
+    positions = spark.createDataFrame(
+        [(1, "B1", "X", "CORPORATE", "BBB", "SENIOR", "LONG", 100.0),
+         (2, "B2", "X", "CORPORATE", "BBB", "SENIOR", "SHORT", 100.0)],
+        "trade_id long, book_id string, issuer_id string, drc_bucket string, rating string, "
+        "seniority string, direction string, notional double",
+    )  # fmt: skip
+    inputs = RunInputs(
+        sensitivities=sens, trades=trades, hierarchy=hierarchy, default_risk_positions=positions
+    )
+    model = load_model()
+    specs = {s.name: s for s in load_specs(None, model)}
+
+    def rows(measure: str, spec: str) -> dict[tuple[str, str], float]:
+        df = MEASURE_REGISTRY[measure](specs[spec], model, inputs)
+        return {(r["node_level"], r["desk_id"]): r["value"] for r in df.collect()}
+
+    firm, desk = ("firm_id", "*"), "firm_id|business_line_id|desk_id"
+    try:
+        drc_rows = rows("frtb_drc_charge", "frtb_drc_by_org")
+        assert drc_rows[firm] == pytest.approx(0.0)
+        assert drc_rows[(desk, "D1")] == pytest.approx(4.5)
+        assert drc_rows[(desk, "D2")] == pytest.approx(0.0)
+        assert drc_rows[firm] != pytest.approx(drc_rows[(desk, "D1")] + drc_rows[(desk, "D2")])
+
+        sbm_rows = rows("frtb_sbm_charge", "frtb_sbm_by_org")
+        assert sbm_rows[firm] == pytest.approx(0.0)
+        assert sbm_rows[(desk, "D1")] == pytest.approx(30.0)
+        assert sbm_rows[(desk, "D2")] == pytest.approx(30.0)
+        assert sbm_rows[firm] != pytest.approx(sbm_rows[(desk, "D1")] + sbm_rows[(desk, "D2")])
+
+        rrao_rows = rows("frtb_rrao_charge", "frtb_rrao_by_org")
+        assert rrao_rows[firm] == pytest.approx(10_000.0)
+        assert rrao_rows[(desk, "D1")] == pytest.approx(10_000.0)
+
+        sa_rows = rows("frtb_sa_charge", "frtb_sa_by_org")
+        assert sa_rows[firm] == pytest.approx(10_000.0)
+        assert sa_rows[(desk, "D1")] == pytest.approx(30.0 + 4.5 + 10_000.0)
+        assert sa_rows[(desk, "D2")] == pytest.approx(30.0)
+    finally:
+        inputs.release()
