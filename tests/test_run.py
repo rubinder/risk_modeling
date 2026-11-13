@@ -297,6 +297,35 @@ def test_reconcile_recomputes_every_stored_vector_measure(spark, official, tmp_p
     assert _failed(audit.reconcile(ctx, spark)) == {"vector_measures_match_pnl_scenarios"}
 
 
+def _bump_firm_component_and_total(component):
+    """+1000 on the firm row of ``component`` and of ``frtb_sa_charge``: total = sum still holds."""
+
+    def change(rows):
+        firm = rows.node_level == "firm_id"
+        for measure in (component, "frtb_sa_charge"):
+            (i,) = rows[firm & (rows.measure == measure)].index
+            rows.loc[i, "value"] += 1000.0
+        return rows
+
+    return change
+
+
+@pytest.mark.parametrize("component", ["frtb_drc_charge", "frtb_rrao_charge"])
+def test_reconcile_recomputes_firm_drc_and_rrao_from_raw(spark, official, tmp_path, component):
+    ctx = _copy_run(official, tmp_path)
+    _rewrite_leaf(ctx.curated("risk_metrics"), _bump_firm_component_and_total(component))
+    checks = {c.name: c for c in audit.reconcile(ctx, spark)}
+    assert _failed(checks.values()) == {"frtb_drc_rrao_firm_match_raw"}
+    assert component in checks["frtb_drc_rrao_firm_match_raw"].detail
+
+
+def test_firm_drc_and_rrao_check_passes_with_its_own_numbers(spark, official, tmp_path):
+    ctx = _copy_run(official, tmp_path)
+    check = audit.check_frtb_drc_rrao_from_raw(ctx, spark)
+    assert check.passed, check.detail
+    assert "2 firm FRTB components recomputed" in check.detail
+
+
 def test_run_exits_nonzero_and_keeps_official_when_reconcile_fails(
     spark, generated, tmp_path, monkeypatch
 ):

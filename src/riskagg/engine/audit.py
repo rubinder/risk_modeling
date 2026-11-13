@@ -12,16 +12,17 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 
 import numpy as np
+import yaml
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from riskagg.context import RunContext
 from riskagg.conventions import es_from_pnl, var_from_pnl
-from riskagg.engine.spec import AggregationSpec, load_specs
+from riskagg.engine.spec import DERIVED_SUFFIXES, AggregationSpec, load_specs
 from riskagg.engine.vectors import GRAIN_DIMS, node_level, unique_sets
 from riskagg.measures import ccar, frtb_ima
 from riskagg.measures.stress import load_scenarios
-from riskagg.paths import REPO_ROOT
+from riskagg.paths import REPO_ROOT, frtb_drc_path
 from riskagg.semantic.model import Measure, load_model
 from riskagg.spark import SESSION_CONF
 
@@ -150,9 +151,6 @@ def check_pnl_scenarios_match_raw_per_grain_cell(ctx: RunContext, spark: SparkSe
     )  # fmt: skip
 
 
-_DERIVED = ("sum_children", "diversification", "incremental")
-
-
 def _vector_value(measure: Measure, pnl: np.ndarray) -> float:
     fn = var_from_pnl if measure.function == "var" else es_from_pnl
     horizon = math.sqrt(float(measure.params.get("horizon_days", 1)))
@@ -230,7 +228,7 @@ def check_vector_measures_from_pnl_scenarios(ctx: RunContext, spark: SparkSessio
     model = load_model()
     specs = {s.name: s for s in load_specs(None, model)}
     vector = {m for m, v in model.measures.items() if v.measure_class == "vector"}
-    names = [*vector, *(f"{m}__{d}" for m in vector for d in _DERIVED)]
+    names = [*vector, *(f"{m}__{d}" for m in vector for d in DERIVED_SUFFIXES)]
     stored_rows = (
         spark.read.parquet(str(ctx.curated("risk_metrics")))
         .where(F.col("measure").isin(names))
@@ -386,6 +384,80 @@ def check_frtb_sa_is_sum_of_components(ctx: RunContext, spark: SparkSession) -> 
         nodes > 0 and incomplete == 0 and bad == 0,
         f"{nodes} nodes, {incomplete} without all four rows, {bad} where the total differs",
     )
+
+
+def _firm_drc_rrao_from_raw(ctx: RunContext, spark: SparkSession) -> dict[str, float]:
+    """Firm default risk charge and residual risk add-on in plain Python from the raw files.
+
+    Reads ``config/reference/frtb_drc.yaml`` itself (not through ``measures.frtb_drc``). Spark
+    only sums notionals per (issuer, bucket, rating, seniority, direction) and of the exotic
+    trades; jump-to-default is linear in notional within such a group, so that is exact.
+    MAR22: JTD = +/- LGD x notional, netted per issuer; per bucket, HBR = long / (long + |short|)
+    and charge = max(sum RW x long - HBR x sum RW x |short|, 0); the DRC sums the buckets.
+    MAR23.8(2)(a): RRAO = 1.0% x gross notional of exotic trades.
+    """
+    ref = yaml.safe_load(frtb_drc_path().read_text())
+    lgd = {str(k).upper(): float(v) for k, v in ref["default_risk"]["lgd"].items()}
+    rw = {str(k).upper(): float(v) for k, v in ref["default_risk"]["risk_weights"].items()}
+    groups = (
+        spark.read.parquet(str(ctx.raw("default_risk_positions")))
+        .groupBy("issuer_id", "drc_bucket", "rating", "seniority", "direction")
+        .agg(F.sum("notional").alias("notional"))
+        .collect()
+    )
+    net: dict[tuple, float] = {}
+    for g in groups:
+        sign = {"LONG": 1.0, "SHORT": -1.0}[g["direction"]]
+        key = (g["issuer_id"], g["drc_bucket"], g["rating"].upper())
+        net[key] = net.get(key, 0.0) + sign * lgd[g["seniority"].upper()] * g["notional"]
+    buckets: dict[str, list[float]] = {}  # bucket -> [long, short, rw x long, rw x short]
+    for (_, bucket, rating), jtd in net.items():
+        acc = buckets.setdefault(bucket, [0.0, 0.0, 0.0, 0.0])
+        long_, short = max(jtd, 0.0), max(-jtd, 0.0)
+        acc[0] += long_
+        acc[1] += short
+        acc[2] += rw[rating] * long_
+        acc[3] += rw[rating] * short
+    drc = 0.0
+    for long_, short, rw_long, rw_short in buckets.values():
+        hbr = long_ / (long_ + short) if long_ + short > 0 else 0.0
+        drc += max(rw_long - hbr * rw_short, 0.0)
+    exotic = (
+        spark.read.parquet(str(ctx.raw("trades")))
+        .where(F.col("is_exotic"))
+        .agg(F.sum("notional").alias("notional"))
+        .first()["notional"]
+    )
+    rrao = float(ref["residual_risk_add_on"]["exotic"]) * (exotic or 0.0)
+    return {"frtb_drc_charge": drc, "frtb_rrao_charge": rrao}
+
+
+def check_frtb_drc_rrao_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
+    """Firm ``frtb_drc_charge`` and ``frtb_rrao_charge`` equal a plain-Python recomputation from
+    the raw default risk positions and trades.
+
+    The SBM is not recomputed here: it is pinned by the FRTB golden tests and the NumPy
+    reference (``tests/reference/np_frtb.py``).
+    """
+    name = "frtb_drc_rrao_firm_match_raw"
+    expected = _firm_drc_rrao_from_raw(ctx, spark)
+    stored = {
+        r["measure"]: r["value"]
+        for r in spark.read.parquet(str(ctx.curated("risk_metrics")))
+        .where(F.col("measure").isin(*expected) & (F.col("node_level") == "firm_id"))
+        .collect()
+    }
+    problems = []
+    for measure, exp in expected.items():
+        got = stored.get(measure)
+        if got is None:
+            problems.append(f"{measure}: no firm row")
+        elif not _close(got, exp):
+            problems.append(f"{measure}: stored {got} vs raw {exp}")
+    detail = f"{len(expected)} firm FRTB components recomputed" + (
+        f"; {'; '.join(problems)}" if problems else ""
+    )
+    return Check(name, not problems, detail)
 
 
 def _firm_ima_from_raw(ctx: RunContext, spark: SparkSession) -> dict[str, float] | None:
@@ -627,6 +699,7 @@ CHECKS: list[CheckFn] = [
     check_no_duplicate_nodes,
     check_stress_firm_pnl_is_sum_of_trades,
     check_frtb_sa_is_sum_of_components,
+    check_frtb_drc_rrao_from_raw,
     check_frtb_imcc_from_raw,
     check_ccar_from_raw,
 ]

@@ -583,8 +583,10 @@ Internal models approach (`src/riskagg/measures/frtb_ima.py`, `src/riskagg/data/
     charged through SES. Not built here; explained in section 3.5. Code: the `SIMPLIFICATION:`
     comments at the top of `frtb_ima.py`.
 12. **How do you know the FRTB numbers in the store are right?** Every run reconciles from
-    disk: the SA total must equal its components at every node, and the firm IMCC is rebuilt
-    from the raw trade vectors with different grouping code; a failing check stops the run
-    being official. Golden tests tie this page to the code. Code:
-    `check_frtb_sa_is_sum_of_components` and `check_frtb_imcc_from_raw` in
-    `src/riskagg/engine/audit.py`.
+    disk: the SA total must equal its components at every node; the firm DRC and RRAO are
+    rebuilt in plain Python from the raw positions and trades and `frtb_drc.yaml`; and the
+    firm IMCC is rebuilt from the raw trade vectors with different grouping code. A failing
+    check stops the run being official. The SBM is not rebuilt per run: it is pinned by the
+    golden tests of section 5 and by the NumPy reference `tests/reference/np_frtb.py`. Code:
+    `check_frtb_sa_is_sum_of_components`, `check_frtb_drc_rrao_from_raw` and
+    `check_frtb_imcc_from_raw` in `src/riskagg/engine/audit.py`.
