@@ -28,10 +28,16 @@ from riskagg.paths import REPO_ROOT, frtb_drc_path
 from riskagg.semantic.model import Measure, load_model
 from riskagg.spark import SESSION_CONF
 
-TOLERANCE = 1e-6
-# Vector-measure rows are compared tighter, relative to their operands: at demo scale (values
-# of order 1e10) 1e-6 would let an error of 1e4 through, while float noise is about 1e-15.
-VECTOR_TOLERANCE = 1e-9
+# The one tolerance of every check: |stored - recomputed| <= TOLERANCE x max(1, scale), where
+# scale is the magnitude of the numbers the value was computed from. For most values that is
+# the value itself; for a value that is a net of larger terms (a diversification or incremental
+# row, a firm stress P&L, a DRC after hedging, a CCAR net income, a grain cell of trades) it is
+# the size of those terms, since float noise follows them and the net can be about 0.
+# Measured on the demo run (2026-11-13): the largest |stored - recomputed| / scale over every
+# check was 9.2e-16 (2.0e-5 on a firm stress P&L of scale 2.1e10; 3.1e-5 on a CCAR flow of
+# 8.2e10; 2.2e-8 on a grain cell). 1e-11 leaves a margin of about 1e4 over that noise and lets
+# through at most 1 currency unit on a firm figure of 1e11 (0.2 on the demo firm sVaR).
+TOLERANCE = 1e-11
 
 
 @dataclass(frozen=True)
@@ -157,7 +163,9 @@ def check_pnl_scenarios_match_raw_per_grain_cell(ctx: RunContext, spark: SparkSe
     joined = joined.withColumn("diff", F.col("raw_pnl") - F.col("curated_pnl"))
     stats = joined.agg(
         F.count(F.lit(1)).alias("n"),
-        F.sum((F.col("raw_pnl").isNull() | F.col("curated_pnl").isNull()).cast("int")).alias("miss"),
+        F.sum((F.col("raw_pnl").isNull() | F.col("curated_pnl").isNull()).cast("int")).alias(
+            "miss"
+        ),
         F.sum((~_within("diff", "raw_pnl_abs")).cast("int")).alias("bad"),
         F.max(F.abs("diff")).alias("max_diff"),
     ).first()
@@ -242,12 +250,16 @@ def _expected_vector_rows(
 def _vector_row_problems(
     stored: Mapping[tuple, float], expected: Mapping[tuple, tuple[float, float]]
 ) -> list[str]:
-    """Missing, extra and wrong rows; a value is wrong beyond ``VECTOR_TOLERANCE`` x its scale."""
-    problems = [f"{k}: stored but not expected" for k in sorted(set(stored) - set(expected), key=str)]
-    problems += [f"{k}: expected but not stored" for k in sorted(set(expected) - set(stored), key=str)]
+    """Missing, extra and wrong rows; a value is wrong beyond ``TOLERANCE`` x its scale."""
+    problems = [
+        f"{k}: stored but not expected" for k in sorted(set(stored) - set(expected), key=str)
+    ]
+    problems += [
+        f"{k}: expected but not stored" for k in sorted(set(expected) - set(stored), key=str)
+    ]
     for key, (exp, scale) in expected.items():
         got = stored.get(key)
-        if got is not None and not _close(got, exp, scale=scale, rel=VECTOR_TOLERANCE):
+        if got is not None and not _close(got, exp, scale=scale):
             problems.append(f"{key}: stored {got} vs recomputed {exp}")
     return problems
 
@@ -329,9 +341,9 @@ def check_stress_firm_pnl_is_sum_of_trades(ctx: RunContext, spark: SparkSession)
         r["risk_factor_id"]: r
         for r in spark.read.parquet(str(ctx.raw("sensitivities")))
         .groupBy("risk_factor_id")
-        .agg(F.sum("delta").alias("delta"), F.sum("gamma").alias("gamma"), F.sum("vega").alias("vega"))
+        .agg(*(F.sum(c).alias(c) for c in ("delta", "gamma", "vega")))
         .collect()
-    }  # fmt: skip
+    }
     factors = spark.read.parquet(str(ctx.raw("risk_factors"))).collect()
     unknown = sorted(set(by_factor) - {f["risk_factor_id"] for f in factors})
     expected: dict[str, float] = {}
@@ -408,11 +420,13 @@ def check_frtb_sa_is_sum_of_components(ctx: RunContext, spark: SparkSession) -> 
             F.count(F.lit(1)).alias("n"),
         )
     )
+    metrics = metrics.withColumn("sa_minus_parts", F.col("sa") - F.col("parts"))
     stats = metrics.agg(
         F.count(F.lit(1)).alias("nodes"),
         F.sum((F.col("n") != 1 + len(FRTB_COMPONENTS)).cast("int")).alias("incomplete"),
-        F.sum((F.abs(F.col("sa") - F.col("parts")) > TOLERANCE * F.greatest(F.lit(1.0), F.abs("sa"))).cast("int")).alias("bad"),
-    ).first()  # fmt: skip
+        # parts are non-negative, so |sa| is the size of the operands
+        F.sum((~_within("sa_minus_parts", "sa")).cast("int")).alias("bad"),
+    ).first()
     nodes, incomplete, bad = stats["nodes"], stats["incomplete"] or 0, stats["bad"] or 0
     return Check(
         name,
@@ -567,7 +581,7 @@ def check_frtb_imcc_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
         got = stored.get(measure)
         if got is None:
             problems.append(f"{measure}: no firm row")
-        elif abs(got - exp) > TOLERANCE * max(1.0, abs(exp)):
+        elif not _close(got, exp):
             problems.append(f"{measure}: stored {got} vs raw {exp}")
     detail = f"{len(expected)} firm IMA measures recomputed" + (
         f"; {'; '.join(problems)}" if problems else ""
@@ -669,15 +683,13 @@ def _ccar_from_raw(ctx: RunContext, spark: SparkSession) -> tuple[dict, dict]:
     return rows, metrics
 
 
-def _close(
-    a: float | None, b: float | None, scale: float | None = None, rel: float = TOLERANCE
-) -> bool:
-    """``|a - b| <= rel x max(1, scale)``. ``scale`` is the magnitude of the operands ``b`` was
-    computed from (default ``|b|``): a difference of large numbers can be about 0, with float
-    noise of the operands' size, so its own size is the wrong yardstick."""
+def _close(a: float | None, b: float | None, scale: float | None = None) -> bool:
+    """``|a - b| <= TOLERANCE x max(1, scale)``. ``scale`` is the magnitude of the operands ``b``
+    was computed from (default ``|b|``): a difference of large numbers can be about 0, with
+    float noise of the operands' size, so its own size is the wrong yardstick."""
     if a is None or b is None:
         return a is None and b is None
-    return abs(a - b) <= rel * max(1.0, abs(b) if scale is None else scale)
+    return abs(a - b) <= TOLERANCE * max(1.0, abs(b) if scale is None else scale)
 
 
 def check_ccar_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
@@ -698,9 +710,12 @@ def check_ccar_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
     columns = (*ccar.LOSS_COLUMNS, *ccar.CAPITAL_COLUMNS)
     flows = ("ppnr", "credit_loss", "trading_loss", "net_income")
 
-    def flow_scale(row: dict) -> float:
-        """ppnr and net income are differences that can be about 0: compare flows against the
-        size of the row's flows, not their own size."""
+    def scale_of(row: dict, column: str) -> float | None:
+        """Net income is (ppnr - credit loss - trading loss) x (1 - tax): it can be about 0
+        with float noise of its terms' size. Every other column is compared against itself
+        (a trading loss of 0 must be 0)."""
+        if column != "net_income":
+            return None
         return sum(abs(row[c]) for c in ("ppnr", "credit_loss", "trading_loss"))
 
     for key, exp in expected_rows.items():
@@ -708,17 +723,17 @@ def check_ccar_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
         if got is None:
             continue
         for c in columns:
-            scale = flow_scale(exp) if c in flows else None
-            if not _close(got[c], exp[c], scale=scale):
+            if not _close(got[c], exp[c], scale=scale_of(exp, c)):
                 problems.append(f"{key} {c}: stored {got[c]} vs raw {exp[c]}")
-    for (scenario, q) in {(k[0], k[1]) for k in stored}:
-        firm_row = stored.get((scenario, q, ccar.FIRM, ccar.FIRM_ID))
-        scale = flow_scale(firm_row) if firm_row else None
+    for scenario, q in {(k[0], k[1]) for k in stored}:
         for c in flows:
-            by_level = {
-                level: sum(v[c] for k, v in stored.items() if k[:3] == (scenario, q, level))
+            members = {
+                level: [v[c] for k, v in stored.items() if k[:3] == (scenario, q, level)]
                 for level in (ccar.BUSINESS_LINE, ccar.LEGAL_ENTITY, ccar.FIRM)
             }
+            by_level = {level: sum(vs) for level, vs in members.items()}
+            # the sums' own operands: the nodes' values
+            scale = max(sum(abs(x) for x in vs) for vs in members.values())
             firm = by_level[ccar.FIRM]
             if not all(_close(v, firm, scale=scale) for v in by_level.values()):
                 problems.append(f"{scenario} q{q} {c}: levels do not reconcile {by_level}")

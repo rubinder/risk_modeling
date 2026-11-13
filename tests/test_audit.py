@@ -62,5 +62,33 @@ def test_noise_on_a_near_zero_diversification_passes_and_a_real_error_fails():
 
 def test_close_scales_with_the_operands_not_the_result():
     assert audit._close(1e-5, 0.0, scale=2e10)
-    assert not audit._close(1e3, 0.0, scale=2e10, rel=audit.VECTOR_TOLERANCE)
+    assert not audit._close(1e2, 0.0, scale=2e10)
     assert not audit._close(1e-5, 0.0)  # no operands given: the value itself is the scale
+
+
+# Largest float noise measured on the demo run (|stored - recomputed|, at that scale), per
+# tolerance use: each must pass, and an error of 1e2 at the same scale must fail.
+DEMO_NOISE = {
+    "vector rows": (7.2e-07, 1.12e09),
+    "firm stress P&L": (1.91e-05, 2.07e10),
+    "firm DRC": (9.6e-07, 5.04e09),
+    "CCAR flow": (3.06e-05, 8.17e10),
+    "firm IMCC": (3.06e-05, 8.90e10),
+}
+
+
+def test_one_tolerance_passes_demo_noise_and_fails_an_error_of_a_hundred():
+    for what, (noise, scale) in DEMO_NOISE.items():
+        assert audit._close(scale + noise, scale), what
+        assert not audit._close(scale + 1e2, scale), what
+        assert not audit._close(scale - 1e2, scale), what
+    # a firm figure of 1e11 lets through at most a few currency units
+    assert audit.TOLERANCE * 1e11 <= 5.0
+
+
+def test_grain_cell_tolerance_in_spark(spark):
+    """Per cell the scale is the sum of |trade P&L| (at most 1.24e8 on demo; noise 2.2e-8)."""
+    rows = [(2.2e-8, 1.24e8), (1.0, 1.24e8), (1e-12, 0.0), (1e-9, 0.0)]
+    df = spark.createDataFrame(rows, "diff double, scale double")
+    got = [r.ok for r in df.select(audit._within("diff", "scale").alias("ok")).collect()]
+    assert got == [True, False, True, False]

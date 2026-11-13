@@ -382,7 +382,11 @@ Every number a user sees can be traced to a run, a configuration and its inputs:
   `pnl_scenarios`; no node appears twice; firm stress P&L equals the sum over raw trades; the
   FRTB SA total equals its components, and the firm DRC and RRAO are rebuilt in plain Python
   from the raw positions and trades; the firm IMCC is rebuilt from raw vectors; CCAR is
-  rebuilt in plain Python (`CHECKS` in `audit.py`).
+  rebuilt in plain Python (`CHECKS` in `audit.py`). Every check uses one tolerance
+  (`TOLERANCE` in `audit.py`): 1e-11 of the size of the numbers a value was computed from,
+  which is the value itself or, for a net of larger terms (a diversification row, a firm
+  stress P&L, a net income), those terms. Float noise measured on the demo run is below 1e-15
+  of that size, and 1e-11 lets through at most one currency unit on a firm figure of 1e11.
 - **What the checks do not cover.** The SBM charge is not recomputed per run: it is pinned by
   the golden tests of the FRTB worked example and by the NumPy reference in
   `tests/reference/np_frtb.py`. The stress check rebuilds the firm P&L from raw sensitivities

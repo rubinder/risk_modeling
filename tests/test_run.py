@@ -353,6 +353,99 @@ def test_firm_drc_and_rrao_check_passes_with_its_own_numbers(spark, official, tm
     assert "2 firm FRTB components recomputed" in check.detail
 
 
+ONE_UNIT = 1.0  # one currency unit: the checks must catch it, not only gross errors
+
+
+def _bump_stress_row(rows):
+    """+1 on one stress_results row outside the global market shock (which CCAR also reads)."""
+    from riskagg.measures import ccar
+    from riskagg.measures.stress import load_scenarios
+
+    other = rows[rows.scenario != ccar.global_market_shock(load_scenarios())]
+    first = other.sort_values(["scenario", "book_id", "asset_class", "currency", "risk_class"])
+    rows.loc[first.index[0], "pnl"] += ONE_UNIT
+    return rows
+
+
+def test_reconcile_catches_one_unit_on_firm_stress_pnl(spark, official, tmp_path):
+    ctx = _copy_run(official, tmp_path)
+    _rewrite_leaf(ctx.curated("stress_results"), _bump_stress_row)
+    assert _failed(audit.reconcile(ctx, spark)) == {"stress_firm_pnl_equals_sum_of_trades"}
+
+
+def _firm_ccar_row(rows, scenario, quarter):
+    hit = rows[
+        (rows.node_level == "FIRM") & (rows.scenario == scenario) & (rows.quarter == quarter)
+    ]
+    (i,) = hit.index
+    return i
+
+
+def _phantom_trading_loss(rows):
+    """A trading loss where there is none: the baseline has no market shock."""
+    i = _firm_ccar_row(rows, "BASELINE", 2)
+    assert rows.loc[i, "trading_loss"] == 0.0
+    rows.loc[i, "trading_loss"] = ONE_UNIT
+    return rows
+
+
+def _wrong_credit_loss(rows):
+    i = _firm_ccar_row(rows, "SEVERELY_ADVERSE", 3)
+    rows.loc[i, "credit_loss"] += ONE_UNIT
+    return rows
+
+
+@pytest.mark.parametrize("change", [_phantom_trading_loss, _wrong_credit_loss])
+def test_reconcile_catches_one_unit_on_a_ccar_flow(spark, official, tmp_path, change):
+    ctx = _copy_run(official, tmp_path)
+    _rewrite_leaf(ctx.curated("ccar_projection"), change)
+    checks = {c.name: c for c in audit.reconcile(ctx, spark)}
+    assert _failed(checks.values()) == {"ccar_projection_matches_raw"}
+
+
+def _bump_firm(measure):
+    def change(rows):
+        (i,) = rows[(rows.node_level == "firm_id") & (rows.measure == measure)].index
+        rows.loc[i, "value"] += ONE_UNIT
+        return rows
+
+    return change
+
+
+def _bump_first_cell(rows):
+    rows.loc[rows.sort_values(GRAIN_KEY).index[0], "pnl"] += ONE_UNIT
+    return rows
+
+
+@pytest.mark.parametrize(
+    ("table", "change", "check"),
+    [
+        ("pnl_scenarios", _bump_first_cell, "pnl_scenarios_equal_raw_per_grain_cell"),
+        ("risk_metrics", _bump_firm("frtb_sa_charge"), "frtb_sa_equals_sum_of_components"),
+        ("risk_metrics", _bump_firm("frtb_imcc"), "frtb_imcc_firm_matches_raw_vectors"),
+    ],
+    ids=["grain_cell", "frtb_sa_total", "imcc"],
+)
+def test_reconcile_catches_one_unit(spark, official, tmp_path, table, change, check):
+    ctx = _copy_run(official, tmp_path)
+    _rewrite_leaf(ctx.curated(table), change)
+    assert check in _failed(audit.reconcile(ctx, spark))
+
+
+def test_reconcile_catches_one_unit_on_firm_drc(spark, official, tmp_path):
+    ctx = _copy_run(official, tmp_path)
+
+    def change(rows):
+        firm = rows.node_level == "firm_id"
+        for measure in ("frtb_drc_charge", "frtb_sa_charge"):
+            (i,) = rows[firm & (rows.measure == measure)].index
+            rows.loc[i, "value"] += ONE_UNIT
+        return rows
+
+    _rewrite_leaf(ctx.curated("risk_metrics"), change)
+    assert _failed(audit.reconcile(ctx, spark)) == {"frtb_drc_rrao_firm_match_raw"}
+
+
 def test_run_exits_nonzero_and_keeps_official_when_reconcile_fails(
     spark, generated, tmp_path, monkeypatch
 ):
