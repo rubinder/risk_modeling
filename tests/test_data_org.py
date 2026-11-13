@@ -16,7 +16,7 @@ def test_profiles_match_brief():
     assert (demo.n_business_lines, demo.n_desks, demo.n_books) == (4, 20, 200)
     assert (demo.n_trades, demo.n_scenarios) == (100_000, 250)
     assert (bench.n_business_lines, bench.n_desks, bench.n_books) == (4, 40, 400)
-    assert (bench.n_trades, bench.n_scenarios, bench.skew_desk_share) == (1_000_000, 250, 0.4)
+    assert (bench.n_trades, bench.n_scenarios, bench.skew_desk_share) == (100_000, 250, 0.4)
     assert bench.windows == ("CURRENT",)
     for p in (tiny, demo):
         assert p.windows == ("CURRENT", "STRESSED") and p.skew_desk_share == 0

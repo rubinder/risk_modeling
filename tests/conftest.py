@@ -1,4 +1,5 @@
 import datetime
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,11 +17,15 @@ from riskagg.semantic.model import SemanticModel, load_model
 
 @pytest.fixture(scope="session")
 def spark():
+    # The UI is on (the benchmark reads its REST status API), bound to loopback, random port.
+    os.environ.setdefault("SPARK_LOCAL_IP", "127.0.0.1")
     session = (
         SparkSession.builder.master("local[2]")
         .appName("riskagg-tests")
         .config("spark.sql.shuffle.partitions", "4")
-        .config("spark.ui.enabled", "false")
+        .config("spark.ui.enabled", "true")
+        .config("spark.ui.port", "0")
+        .config("spark.ui.showConsoleProgress", "false")
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.sql.adaptive.enabled", "true")
         .getOrCreate()

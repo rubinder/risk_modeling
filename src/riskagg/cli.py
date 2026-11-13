@@ -1,4 +1,4 @@
-"""Command line: ``generate``, ``run``, ``load-pinot``, ``serve`` and ``query``."""
+"""Command line: ``generate``, ``run``, ``load-pinot``, ``serve``, ``query`` and ``bench``."""
 
 import datetime
 from pathlib import Path
@@ -31,7 +31,7 @@ from riskagg.engine.spec import load_specs, spec_hash
 from riskagg.measures.frtb_drc import sa_detail
 from riskagg.measures.frtb_ima import ima_detail
 from riskagg.measures.stress import load_scenarios, shock_table
-from riskagg.paths import CONFIG_DIR, semantic_model_path
+from riskagg.paths import CONFIG_DIR, REPO_ROOT, semantic_model_path
 from riskagg.semantic.model import load_model
 from riskagg.serving import curate, pinot
 from riskagg.spark import get_spark
@@ -40,6 +40,8 @@ app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 ProfileOpt = typer.Option("--profile", help=f"One of {', '.join(PROFILES)}")
 AsOfOpt = typer.Option("--as-of", help="As-of date, YYYY-MM-DD (default: today)")
+BenchOutOpt = typer.Option(REPO_ROOT / "docs/benchmarks/report.md", "--out")
+RepeatsOpt = typer.Option(3, "--repeats", min=1, help="Timed runs per variant")
 
 
 def _profile(name: str):
@@ -258,3 +260,19 @@ def query(
     label = f"{measure} by {', '.join(dims)}" if dims else measure
     typer.echo(f"{label} for {client.as_of_date} run {client.run_id} (source: {client.source})")
     typer.echo(df.to_string(index=False, float_format=lambda v: f"{v:,.2f}"))
+
+
+@app.command()
+def bench(
+    profile: str = ProfileOpt,
+    out: Path = BenchOutOpt,
+    repeats: int = RepeatsOpt,
+) -> None:
+    """Time naive and tuned variants of the aggregation on a profile; write the report."""
+    from riskagg.bench.runner import run_benchmark
+
+    p = _profile(profile)
+    measurements = run_benchmark(p, out, repeats=repeats)
+    for m in measurements:
+        typer.echo(f"  {m.variant.group:<20} {m.variant.name:<26} {m.median:8.2f} s")
+    typer.echo(f"wrote {out}")
