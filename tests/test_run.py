@@ -285,6 +285,19 @@ def _drop(measure, level):
     return change
 
 
+def _drop_spec(aggregation):
+    def change(rows):
+        return rows[rows.aggregation != aggregation]
+
+    return change
+
+
+def _label_firm_row_with_a_desk(rows):
+    (i,) = rows[(rows.measure == "var_99_1d") & (rows.node_level == "firm_id")].index
+    rows.loc[i, "desk_id"] = "DESK001"
+    return rows
+
+
 VECTOR_ROW_CORRUPTIONS = {
     "desk": _bump("var_99_1d", DESK),
     "desk_asset_class": _bump("var_99_1d", "desk_id|asset_class"),
@@ -295,6 +308,8 @@ VECTOR_ROW_CORRUPTIONS = {
     "es_desk": _bump("es_975_1d", DESK),
     "svar_incremental": _bump("svar_99_1d__incremental", BOOK),
     "var_10d_firm": _bump("var_99_10d", "firm_id"),
+    "every_row_of_a_spec": _drop_spec("es_by_org"),
+    "rolled_up_dim_not_star": _label_firm_row_with_a_desk,
 }
 
 

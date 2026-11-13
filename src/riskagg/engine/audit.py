@@ -20,7 +20,7 @@ from pyspark.sql import functions as F
 from riskagg.context import RunContext
 from riskagg.conventions import es_from_pnl, var_from_pnl
 from riskagg.engine.spec import DERIVED_SUFFIXES, AggregationSpec, load_specs
-from riskagg.engine.vectors import GRAIN_DIMS, node_level, unique_sets
+from riskagg.engine.vectors import GRAIN_DIMS, ROLLED_UP, node_level, unique_sets
 from riskagg.measures import ccar, frtb_ima
 from riskagg.measures.stress import load_scenarios
 from riskagg.paths import REPO_ROOT, frtb_drc_path
@@ -240,16 +240,20 @@ def check_vector_measures_from_pnl_scenarios(ctx: RunContext, spark: SparkSessio
         .where(F.col("measure").isin(names))
         .collect()
     )
-    stored = {
-        (r["aggregation"], r["measure"], r["node_level"],
-         tuple(r[d] for d in r["node_level"].split("|"))): r["value"]
-        for r in stored_rows
-    }  # fmt: skip
     problems: list[str] = []
+    stored: dict[tuple, float] = {}
+    for r in stored_rows:
+        dims = r["node_level"].split("|")
+        stored[(r["aggregation"], r["measure"], r["node_level"], tuple(r[d] for d in dims))] = (
+            r["value"]
+        )
+        if any(r[d] != ROLLED_UP for d in GRAIN_DIMS if d not in dims):
+            problems.append(f"{r['measure']} row at {r['node_level']} has a non-* rolled-up dim")
     expected: dict[tuple, float] = {}
     pnl = spark.read.parquet(str(ctx.curated("pnl_scenarios")))
     cache: dict[tuple, dict] = {}
-    for agg in sorted({k[0] for k in stored}):
+    declared = {n for n, s in specs.items() if s.measure in vector}
+    for agg in sorted({k[0] for k in stored} | declared):
         spec = specs.get(agg)
         if spec is None or spec.measure not in vector:
             problems.append(f"aggregation '{agg}' is not a vector specification")
@@ -264,9 +268,9 @@ def check_vector_measures_from_pnl_scenarios(ctx: RunContext, spark: SparkSessio
             model.measure(spec.measure), spec, model.hierarchies["org"], vectors
         )
         expected |= {(agg, *k): v for k, v in rows.items()}
-    for key in sorted(set(stored) - set(expected)):
+    for key in sorted(set(stored) - set(expected), key=str):
         problems.append(f"{key}: stored but not expected")
-    for key in sorted(set(expected) - set(stored)):
+    for key in sorted(set(expected) - set(stored), key=str):
         problems.append(f"{key}: expected but not stored")
     for key, exp in expected.items():
         got = stored.get(key)
