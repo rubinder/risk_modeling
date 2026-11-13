@@ -18,6 +18,8 @@ from riskagg.data.profiles import Profile
 # SIMPLIFICATION: one common factor per risk class plus one market-wide factor; a single
 # correlation level per window instead of an estimated correlation matrix.
 CLASS_CORRELATION = {"CURRENT": 0.5, "STRESSED": 0.8}
+# SIMPLIFICATION: the stressed window is the current factor model with volatility tripled and
+# correlation raised, not a historical 12-month period of significant stress chosen by the bank.
 VOL_MULTIPLIER = {"CURRENT": 1.0, "STRESSED": 3.0}
 MARKET_WEIGHT = 0.3  # share of a class factor's variance that is market-wide
 OPTION_SHARE = 0.3
@@ -127,6 +129,8 @@ def make_pnl_vectors(
     risk_factors: DataFrame,
 ) -> DataFrame:
     """One row per trade x (risk_class, liquidity_horizon, in_reduced_set) x window."""
+    # SIMPLIFICATION: scenario P&L is linear in the factor returns (exposure x return), not a
+    # full revaluation of each trade under each historical scenario.
     rf_pdf = risk_factors.toPandas().sort_values("risk_factor_id").reset_index(drop=True)
     returns = {w: factor_returns(p, rf_pdf, w) for w in p.windows}
     rf_idx = spark.createDataFrame(
