@@ -1,0 +1,31 @@
+# FRTB standardised approach: default risk charge (non-securitisations) and residual risk
+# add-on. Source: Basel Framework MAR22 and MAR23 (in force 1 January 2023), checked against
+# the BIS text. Paragraph numbers are given beside each group. Rates are decimals.
+
+default_risk:
+  # MAR22.12: equity instruments and non-senior debt LGD 100%; senior debt LGD 75%.
+  # (Covered bonds, 25%, are not modelled.)
+  lgd:
+    senior: 0.75
+    non_senior: 1.0
+    equity: 1.0
+  # MAR22.24: default risk weight by credit quality, for all three non-securitisation buckets.
+  risk_weights:
+    AAA: 0.005
+    AA: 0.02
+    A: 0.03
+    BBB: 0.06
+    BB: 0.15
+    B: 0.30
+    CCC: 0.50
+    UNRATED: 0.15
+    DEFAULTED: 1.0
+  # MAR22.22 names corporates, sovereigns, and local governments and municipalities. The
+  # platform models the first two; MAR22.26: no hedging between buckets, charges are summed.
+  buckets: [CORPORATE, SOVEREIGN]
+
+residual_risk_add_on:
+  # MAR23.8(2)(a): exotic underlyings (MAR23.3), applied to gross notional.
+  exotic: 0.01
+  # MAR23.8(2)(b): other residual risks (MAR23.4). Not applied by the platform.
+  other: 0.001

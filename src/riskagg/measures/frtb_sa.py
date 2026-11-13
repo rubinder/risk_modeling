@@ -119,11 +119,27 @@ def girr_delta_rho(t_k: float, t_l: float, ref: FrtbSaRef) -> float:
 
 
 def attach_org(sens: DataFrame, hierarchy: DataFrame, cols: list[str]) -> DataFrame:
-    """Add organisation columns from the hierarchy by ``book_id`` (broadcast, one row per book)."""
+    """Add organisation columns from the hierarchy by ``book_id`` (broadcast, one row per book).
+
+    A book missing from the hierarchy is an error, never a silently dropped row (as in
+    ``engine.grain``): the check is one extra pass over the distinct books of ``sens``.
+    """
     missing = [c for c in cols if c not in sens.columns]
     if not missing:
         return sens
-    return sens.join(F.broadcast(hierarchy.select("book_id", *missing)), "book_id")
+    books = hierarchy.select("book_id", *missing)
+    unknown = (
+        sens.select("book_id")
+        .distinct()
+        .join(F.broadcast(books.select("book_id")), "book_id", "left_anti")
+        .limit(10)
+        .collect()
+    )
+    if unknown:
+        raise ValueError(
+            f"book_id missing from hierarchy: {sorted(str(r['book_id']) for r in unknown)}"
+        )
+    return sens.join(F.broadcast(books), "book_id")
 
 
 # --- column expressions -------------------------------------------------------------------
@@ -316,7 +332,20 @@ def sbm_charges(sens: DataFrame, node_cols: list[str], ref: FrtbSaRef) -> DataFr
     One row per node x risk class x component that has sensitivities, per scenario. ``sens``
     must already carry ``node_cols`` (see ``attach_org``); ``[]`` is the whole portfolio.
     """
-    detail = bucket_detail(sens, node_cols, ref)
+    return charges_from_detail(bucket_detail(sens, node_cols, ref), ref)
+
+
+def charges_from_detail(detail: DataFrame, ref: FrtbSaRef) -> DataFrame:
+    """The across-bucket step of ``sbm_charges`` from an (optionally cached) ``bucket_detail``.
+
+    Lets a run compute the bucket detail once and use it for both the charges and the curated
+    detail table.
+    """
+    node_cols = [
+        c
+        for c in detail.columns
+        if c not in ("risk_class", "component", "bucket", "corr_scenario", "k_b", "s_b")
+    ]
     keys = [*node_cols, "risk_class", "component", "corr_scenario"]
     b = detail.withColumnsRenamed({"bucket": "b", "k_b": "k1", "s_b": "s1"})
     c = detail.withColumnsRenamed({"bucket": "c", "k_b": "k2", "s_b": "s2"})

@@ -27,6 +27,10 @@ def test_shipped_config_loads():
         "var_by_org",
         "var_by_desk_asset_class",
         "worst_stress_by_org",
+        "frtb_sa_by_org",
+        "frtb_sbm_by_org",
+        "frtb_drc_by_org",
+        "frtb_rrao_by_org",
     ]
     assert model.grain == (
         "firm_id", "business_line_id", "desk_id", "book_id", "legal_entity",

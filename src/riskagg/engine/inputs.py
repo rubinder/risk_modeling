@@ -20,7 +20,27 @@ class RunInputs:
     trades: DataFrame | None = None
     hierarchy: DataFrame | None = None
     shocks: DataFrame | None = None
+    default_risk_positions: DataFrame | None = None
     _stress_grain: DataFrame | None = field(default=None, repr=False)
+    # FRTB levels by node columns. ``run_all`` copies the inputs with ``dataclasses.replace``,
+    # which passes this same dict on, so a level built through a copy is visible to the original.
+    _frtb_levels: dict = field(default_factory=dict, repr=False)
+
+    def frtb_level(self, node_cols: list[str]):
+        """FRTB SA frames at a node level, built and cached once per run (see ``release``)."""
+        key = tuple(node_cols)
+        if key not in self._frtb_levels:
+            from riskagg.measures.frtb_drc import build_level
+
+            self._frtb_levels[key] = build_level(self, list(node_cols))
+        return self._frtb_levels[key]
+
+    def release(self) -> None:
+        """Unpersist every frame cached for FRTB."""
+        for level in self._frtb_levels.values():
+            for df in level.cached:
+                df.unpersist()
+        self._frtb_levels.clear()
 
     def stress_grain(self) -> DataFrame:
         if self._stress_grain is None:

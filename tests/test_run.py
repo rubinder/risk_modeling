@@ -60,7 +60,10 @@ def test_run_id_format_and_context(tmp_path):
 
 def test_generate_writes_raw_datasets(generated):
     base = generated / "raw/tiny" / f"as_of_date={AS_OF}"
-    names = {"hierarchy", "risk_factors", "trades", "exposures", "pnl_vectors", "sensitivities"}
+    names = {
+        "hierarchy", "risk_factors", "trades", "exposures", "pnl_vectors", "sensitivities",
+        "default_risk_positions",
+    }  # fmt: skip
     assert {p.name for p in base.iterdir()} == names
     assert all(list((base / n).glob("*.parquet")) for n in names)
 
@@ -88,7 +91,7 @@ def test_run_curates_and_writes_manifest(spark, generated, tmp_path):
     assert manifest["spec_hash"] == metrics.select("spec_hash").first().spec_hash
     assert manifest["spark_version"] == spark.version and manifest["git_commit"]
     assert manifest["spark_conf"]["spark.sql.session.timeZone"] == "UTC"
-    assert set(manifest["inputs"]) == {"hierarchy", "pnl_vectors"}
+    assert set(manifest["inputs"]) == {"hierarchy", "pnl_vectors", "default_risk_positions"}
     assert manifest["inputs"]["hierarchy"]["rows"] == 6
     assert manifest["reconciliation"]["passed"] is True
     assert len(manifest["reconciliation"]["checks"]) == len(audit.CHECKS)

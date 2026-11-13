@@ -1,4 +1,4 @@
-"""Curated outputs: ``risk_metrics``, ``pnl_scenarios`` and ``stress_results``, partitioned by as-of date and run.
+"""Curated outputs: ``risk_metrics``, ``pnl_scenarios``, ``stress_results`` and ``frtb_sa_detail``, partitioned by as-of date and run.
 
 All are written with ``as_of_date`` and ``run_id`` as partition directories, and dynamic
 partition overwrite, so a re-run never touches another run's partition. Reading the table
@@ -50,3 +50,14 @@ def write_stress_results(stress_grain: DataFrame, ctx: RunContext) -> None:
         c for c in load_model().tables["stress_results"]["columns"] if c not in PARTITION_COLS
     ]
     _write(stress_grain.select(*columns), ctx, "stress_results")
+
+
+def write_frtb_sa_detail(detail: DataFrame, ctx: RunContext) -> None:
+    """FRTB bucket detail (K_b, S_b) per node, risk class, component, bucket and scenario.
+
+    Not additive: K_b values must never be summed. Columns of the model's ``frtb_sa_detail``.
+    """
+    columns = [
+        c for c in load_model().tables["frtb_sa_detail"]["columns"] if c not in PARTITION_COLS
+    ]
+    _write(detail.select(*columns), ctx, "frtb_sa_detail")

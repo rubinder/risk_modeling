@@ -13,14 +13,17 @@ from pyspark.sql import DataFrame
 from riskagg.engine.inputs import RunInputs
 from riskagg.engine.spec import AggregationSpec
 from riskagg.engine.vectors import METRIC_COLUMNS, aggregate_vectors, node_level, unique_sets
-from riskagg.measures import stress, var
+from riskagg.measures import frtb_drc, stress, var
 from riskagg.semantic.model import SemanticModel, SpecError
 
 MeasureFn = Callable[[AggregationSpec, SemanticModel, RunInputs], DataFrame]
 
 # Measure name -> fn(spec, model, inputs) returning rows in METRIC_COLUMNS. ``inputs`` carries
 # the reporting grain and the raw frames of the run. Vector measures are handled by the engine.
-MEASURE_REGISTRY: dict[str, MeasureFn] = {"worst_stress_loss": stress.worst_stress_loss}
+MEASURE_REGISTRY: dict[str, MeasureFn] = {
+    "worst_stress_loss": stress.worst_stress_loss,
+    **frtb_drc.FRTB_MEASURES,
+}
 
 FilterKey = tuple[tuple[str, tuple[str, ...]], ...]
 

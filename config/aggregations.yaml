@@ -22,3 +22,31 @@
     - [firm_id, business_line_id, desk_id, book_id]
   filters: {}
   diversification: false
+- name: frtb_sa_by_org
+  measure: frtb_sa_charge
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, business_line_id, desk_id]
+  filters: {}
+  diversification: false
+- name: frtb_sbm_by_org
+  measure: frtb_sbm_charge
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, business_line_id, desk_id]
+  filters: {}
+  diversification: false
+- name: frtb_drc_by_org
+  measure: frtb_drc_charge
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, business_line_id, desk_id]
+  filters: {}
+  diversification: false
+- name: frtb_rrao_by_org
+  measure: frtb_rrao_charge
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, business_line_id, desk_id]
+  filters: {}
+  diversification: false

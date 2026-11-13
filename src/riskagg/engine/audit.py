@@ -269,11 +269,45 @@ def check_stress_firm_pnl_is_sum_of_trades(ctx: RunContext, spark: SparkSession)
     return Check(name, bool(expected) and not problems, detail)
 
 
+FRTB_COMPONENTS = ("frtb_sbm_charge", "frtb_drc_charge", "frtb_rrao_charge")
+
+
+def check_frtb_sa_is_sum_of_components(ctx: RunContext, spark: SparkSession) -> Check:
+    """At every node, ``frtb_sa_charge`` = SBM + default risk + residual add-on charges.
+
+    Deliberately not checked: that a parent's SBM charge is at most the sum of its children's.
+    It is not guaranteed (the binding correlation scenario can differ between nodes).
+    """
+    name = "frtb_sa_equals_sum_of_components"
+    metrics = (
+        spark.read.parquet(str(ctx.curated("risk_metrics")))
+        .where(F.col("measure").isin("frtb_sa_charge", *FRTB_COMPONENTS))
+        .groupBy("node_level", *GRAIN_DIMS)
+        .agg(
+            F.max(F.when(F.col("measure") == "frtb_sa_charge", F.col("value"))).alias("sa"),
+            F.sum(F.when(F.col("measure").isin(*FRTB_COMPONENTS), F.col("value"))).alias("parts"),
+            F.count(F.lit(1)).alias("n"),
+        )
+    )
+    stats = metrics.agg(
+        F.count(F.lit(1)).alias("nodes"),
+        F.sum((F.col("n") != 1 + len(FRTB_COMPONENTS)).cast("int")).alias("incomplete"),
+        F.sum((F.abs(F.col("sa") - F.col("parts")) > TOLERANCE * F.greatest(F.lit(1.0), F.abs("sa"))).cast("int")).alias("bad"),
+    ).first()  # fmt: skip
+    nodes, incomplete, bad = stats["nodes"], stats["incomplete"] or 0, stats["bad"] or 0
+    return Check(
+        name,
+        nodes > 0 and incomplete == 0 and bad == 0,
+        f"{nodes} nodes, {incomplete} without all four rows, {bad} where the total differs",
+    )
+
+
 CHECKS: list[CheckFn] = [
     check_firm_vector_is_sum_of_book_vectors,
     check_firm_var_from_pnl_scenarios,
     check_no_duplicate_nodes,
     check_stress_firm_pnl_is_sum_of_trades,
+    check_frtb_sa_is_sum_of_components,
 ]
 
 

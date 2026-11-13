@@ -74,6 +74,50 @@ measures:
       - [firm_id, business_line_id]
       - [firm_id, business_line_id, desk_id]
       - [firm_id, business_line_id, desk_id, book_id]
+  frtb_sa_charge:
+    label: FRTB SA capital charge
+    description: >-
+      Standardised approach market risk capital: sensitivities-based charge (binding correlation scenario) plus default risk charge plus residual risk add-on. A positive number is capital. Recomputed from the netted
+      positions at each node, never a sum of the nodes below: only looked up.
+    unit: USD
+    class: structured
+    table: risk_metrics
+    computed_at:
+      - [firm_id]
+      - [firm_id, business_line_id, desk_id]
+  frtb_sbm_charge:
+    label: FRTB SBM charge
+    description: >-
+      Sensitivities-based method charge at the binding correlation scenario (MAR21). A positive number is capital. Recomputed from the netted
+      positions at each node, never a sum of the nodes below: only looked up.
+    unit: USD
+    class: structured
+    table: risk_metrics
+    computed_at:
+      - [firm_id]
+      - [firm_id, business_line_id, desk_id]
+  frtb_drc_charge:
+    label: FRTB default risk charge
+    description: >-
+      Default risk charge for non-securitisations, summed over buckets (MAR22). A positive number is capital. Recomputed from the netted
+      positions at each node, never a sum of the nodes below: only looked up.
+    unit: USD
+    class: structured
+    table: risk_metrics
+    computed_at:
+      - [firm_id]
+      - [firm_id, business_line_id, desk_id]
+  frtb_rrao_charge:
+    label: FRTB residual risk add-on
+    description: >-
+      Residual risk add-on on exotic-underlying notional (MAR23). A positive number is capital. Recomputed from the netted
+      positions at each node, never a sum of the nodes below: only looked up.
+    unit: USD
+    class: structured
+    table: risk_metrics
+    computed_at:
+      - [firm_id]
+      - [firm_id, business_line_id, desk_id]
 
 tables:
   risk_metrics:
@@ -126,3 +170,20 @@ tables:
       risk_class: {type: STRING, role: dimension}
       scenario: {type: STRING, role: dimension}
       pnl: {type: DOUBLE, role: metric}
+  frtb_sa_detail:
+    # Not additive: k_b is a bucket charge (a square root) and s_b a signed bucket sum; neither
+    # may be summed over buckets, nodes or scenarios. No measure is served from this table, so
+    # no Pinot star-tree is built for it. Read it with the drill-down.
+    columns:
+      as_of_date: {type: DATE, role: time}
+      run_id: {type: STRING, role: dimension}
+      node_level: {type: STRING, role: dimension}
+      firm_id: {type: STRING, role: dimension}
+      business_line_id: {type: STRING, role: dimension}
+      desk_id: {type: STRING, role: dimension}
+      risk_class: {type: STRING, role: dimension}
+      component: {type: STRING, role: dimension}
+      bucket: {type: STRING, role: dimension}
+      corr_scenario: {type: STRING, role: dimension}
+      k_b: {type: DOUBLE, role: metric}
+      s_b: {type: DOUBLE, role: metric}

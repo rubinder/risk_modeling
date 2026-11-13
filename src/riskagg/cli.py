@@ -14,6 +14,7 @@ from riskagg.context import (
     raw_path,
     run_context,
 )
+from riskagg.data.banking import make_default_risk_positions
 from riskagg.data.market import make_exposures, make_pnl_vectors, make_sensitivities
 from riskagg.data.org import make_hierarchy, make_risk_factors, make_trades
 from riskagg.data.profiles import PROFILES
@@ -22,6 +23,7 @@ from riskagg.engine.grain import build_reporting_grain
 from riskagg.engine.inputs import RunInputs
 from riskagg.engine.runner import run_all
 from riskagg.engine.spec import load_specs, spec_hash
+from riskagg.measures.frtb_drc import sa_detail
 from riskagg.measures.stress import load_scenarios, shock_table
 from riskagg.paths import CONFIG_DIR, semantic_model_path
 from riskagg.semantic.model import load_model
@@ -83,6 +85,7 @@ def generate(
             "exposures": exposures,
             "pnl_vectors": make_pnl_vectors(spark, p, trades, exposures, risk_factors),
             "sensitivities": make_sensitivities(spark, p, exposures, risk_factors),
+            "default_risk_positions": make_default_risk_positions(spark, p, trades),
         }
         for name, df in datasets.items():
             df.write.mode("overwrite").parquet(str(raw_path(root, profile, as_of_date, name)))
@@ -107,7 +110,7 @@ def run(
     specs = load_specs(None, model)
     ctx = new_run(profile, as_of_date, root, spec_hash(specs, reference_paths()))
     spark, owned = _session()
-    grain = stress_grain = None
+    grain = stress_grain = inputs = None
     try:
         hierarchy = spark.read.parquet(str(ctx.raw("hierarchy")))
         pnl_vectors = spark.read.parquet(str(ctx.raw("pnl_vectors")))
@@ -116,6 +119,7 @@ def run(
             sensitivities=spark.read.parquet(str(ctx.raw("sensitivities"))),
             trades=spark.read.parquet(str(ctx.raw("trades"))),
             hierarchy=hierarchy,
+            default_risk_positions=spark.read.parquet(str(ctx.raw("default_risk_positions"))),
             shocks=shock_table(
                 spark, load_scenarios(), spark.read.parquet(str(ctx.raw("risk_factors")))
             ),
@@ -125,8 +129,17 @@ def run(
         curate.write_risk_metrics(metrics, ctx)
         curate.write_pnl_scenarios(grain, ctx, p.n_scenarios)
         curate.write_stress_results(stress_grain, ctx)
+        levels = [list(c) for c in model.measure("frtb_sa_charge").computed_at]
+        curate.write_frtb_sa_detail(sa_detail(inputs, levels), ctx)
         audit.write_manifest(
-            ctx, {"hierarchy": hierarchy, "pnl_vectors": pnl_vectors}, spark, p.n_scenarios
+            ctx,
+            {
+                "hierarchy": hierarchy,
+                "pnl_vectors": pnl_vectors,
+                "default_risk_positions": inputs.default_risk_positions,
+            },
+            spark,
+            p.n_scenarios,
         )
         checks = audit.reconcile(ctx, spark)
         audit.record_reconciliation(ctx, checks)
@@ -144,6 +157,8 @@ def run(
             grain.unpersist()
         if stress_grain is not None:
             stress_grain.unpersist()
+        if inputs is not None:
+            inputs.release()
         if owned:
             spark.stop()
 
