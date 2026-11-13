@@ -1,0 +1,43 @@
+# Stress scenario library. Units: EQ and FX shocks are relative returns (-0.40 = -40%),
+# GIRR shocks are absolute rate changes (0.02 = +200bp), VEGA shocks are absolute volatility
+# changes (0.30 = +30 vol points). A rule matches on risk_class and factor_type, and
+# optionally bucket and/or currency; the rule with the most optional fields wins.
+# A factor that matches no rule is not shocked.
+- name: GFC_2008
+  description: Global financial crisis, 2008-style - equities and FX fall, rates drop, vol jumps
+  global_market_shock: true
+  shocks:
+    - {risk_class: EQ, factor_type: DELTA, shock: -0.40}
+    - {risk_class: GIRR, factor_type: DELTA, shock: -0.015}
+    - {risk_class: FX, factor_type: DELTA, shock: -0.10}
+    - {risk_class: FX, factor_type: DELTA, currency: BRL, shock: -0.25}
+    - {risk_class: FX, factor_type: DELTA, currency: ZAR, shock: -0.25}
+    - {risk_class: EQ, factor_type: VEGA, shock: 0.30}
+    - {risk_class: GIRR, factor_type: VEGA, shock: 0.30}
+    - {risk_class: FX, factor_type: VEGA, shock: 0.30}
+- name: RATES_UP_200BP
+  description: Parallel rise of 200 basis points in every interest-rate curve
+  global_market_shock: false
+  shocks:
+    - {risk_class: GIRR, factor_type: DELTA, shock: 0.02}
+- name: EQUITY_DOWN_30
+  description: Equity prices fall 30% in every bucket; equity volatility rises 15 points
+  global_market_shock: false
+  shocks:
+    - {risk_class: EQ, factor_type: DELTA, shock: -0.30}
+    - {risk_class: EQ, factor_type: VEGA, shock: 0.15}
+- name: FX_CRISIS
+  description: Emerging-market currency crisis - BRL and ZAR fall 20%, others 5%
+  global_market_shock: false
+  shocks:
+    - {risk_class: FX, factor_type: DELTA, shock: -0.05}
+    - {risk_class: FX, factor_type: DELTA, currency: BRL, shock: -0.20}
+    - {risk_class: FX, factor_type: DELTA, currency: ZAR, shock: -0.20}
+    - {risk_class: FX, factor_type: VEGA, shock: 0.20}
+- name: VOL_SPIKE
+  description: Implied volatility rises 25 points in every risk class; no spot or rate moves
+  global_market_shock: false
+  shocks:
+    - {risk_class: EQ, factor_type: VEGA, shock: 0.25}
+    - {risk_class: GIRR, factor_type: VEGA, shock: 0.25}
+    - {risk_class: FX, factor_type: VEGA, shock: 0.25}

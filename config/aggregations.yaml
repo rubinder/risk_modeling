@@ -13,3 +13,12 @@
     - [desk_id, asset_class]
   filters: {}
   diversification: false
+- name: worst_stress_by_org
+  measure: worst_stress_loss
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, business_line_id]
+    - [firm_id, business_line_id, desk_id]
+    - [firm_id, business_line_id, desk_id, book_id]
+  filters: {}
+  diversification: false

@@ -23,7 +23,11 @@ def _specs(tmp_path, body, model=None):
 def test_shipped_config_loads():
     model = load_model(semantic_model_path())
     specs = load_specs(aggregations_path(), model)
-    assert [s.name for s in specs] == ["var_by_org", "var_by_desk_asset_class"]
+    assert [s.name for s in specs] == [
+        "var_by_org",
+        "var_by_desk_asset_class",
+        "worst_stress_by_org",
+    ]
     assert model.grain == (
         "firm_id", "business_line_id", "desk_id", "book_id", "legal_entity",
         "region", "asset_class", "currency", "risk_class",

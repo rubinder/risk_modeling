@@ -17,6 +17,7 @@ from pyspark.sql import functions as F
 from riskagg.context import RunContext
 from riskagg.conventions import es_from_pnl, var_from_pnl
 from riskagg.engine.vectors import GRAIN_DIMS
+from riskagg.measures.stress import load_scenarios
 from riskagg.paths import REPO_ROOT
 from riskagg.semantic.model import load_model
 from riskagg.spark import SESSION_CONF
@@ -196,10 +197,83 @@ def check_no_duplicate_nodes(ctx: RunContext, spark: SparkSession) -> Check:
     return Check(name, dupes == 0, f"{dupes} duplicated (node, measure) keys")
 
 
+def check_stress_firm_pnl_is_sum_of_trades(ctx: RunContext, spark: SparkSession) -> Check:
+    """Firm stress P&L per scenario in ``stress_results`` equals the sum over the raw trades.
+
+    The raw side sums the raw sensitivities per risk factor (a few dozen rows, not a trade
+    count) and applies each scenario's shocks in NumPy. P&L is linear in delta, gamma and vega,
+    so the per-factor sums give the same total as summing trade by trade. It also checks the
+    firm ``worst_stress_loss`` row against the worst of those per-scenario totals.
+    """
+    name = "stress_firm_pnl_equals_sum_of_trades"
+    scenarios = load_scenarios()
+    by_factor = {
+        r["risk_factor_id"]: r
+        for r in spark.read.parquet(str(ctx.raw("sensitivities")))
+        .groupBy("risk_factor_id")
+        .agg(F.sum("delta").alias("delta"), F.sum("gamma").alias("gamma"), F.sum("vega").alias("vega"))
+        .collect()
+    }  # fmt: skip
+    factors = spark.read.parquet(str(ctx.raw("risk_factors"))).collect()
+    unknown = sorted(set(by_factor) - {f["risk_factor_id"] for f in factors})
+    expected: dict[str, float] = {}
+    for sc in scenarios:
+        total = 0.0
+        for f in factors:
+            agg = by_factor.get(f["risk_factor_id"])
+            if agg is None:
+                continue
+            x = sc.shock_for(f["risk_class"], f["factor_type"], f["bucket"], f["currency"])
+            if f["factor_type"] == "DELTA":
+                total += agg["delta"] * x + 0.5 * agg["gamma"] * x * x
+            else:
+                total += agg["vega"] * x
+        expected[sc.name] = total
+    stored = {
+        r["scenario"]: r["pnl"]
+        for r in spark.read.parquet(str(ctx.curated("stress_results")))
+        .groupBy("scenario")
+        .agg(F.sum("pnl").alias("pnl"))
+        .collect()
+    }
+    problems = []
+    if unknown:
+        problems.append(f"sensitivities for unknown risk factors {unknown}")
+    if set(stored) != set(expected):
+        problems.append(f"scenarios {sorted(stored)} stored vs {sorted(expected)} defined")
+    for sc, exp in expected.items():
+        got = stored.get(sc)
+        if got is not None and abs(got - exp) > TOLERANCE * max(1.0, abs(exp)):
+            problems.append(f"{sc}: stored {got} vs raw {exp}")
+    worst = (
+        spark.read.parquet(str(ctx.curated("risk_metrics")))
+        .where((F.col("measure") == "worst_stress_loss") & (F.col("node_level") == "firm_id"))
+        .select("scenario", "value")
+        .collect()
+    )
+    if len(worst) != 1:
+        problems.append(f"{len(worst)} firm worst_stress_loss rows, expected 1")
+    elif expected:
+        scen, loss = min(
+            ((n, -v) for n, v in sorted(expected.items())), key=lambda t: (-t[1], t[0])
+        )
+        if worst[0]["scenario"] != scen or abs(worst[0]["value"] - loss) > TOLERANCE * max(
+            1.0, abs(loss)
+        ):
+            problems.append(
+                f"firm worst {worst[0]['scenario']} {worst[0]['value']} vs raw {scen} {loss}"
+            )
+    detail = f"{len(expected)} scenarios compared" + (
+        f"; {'; '.join(problems)}" if problems else ""
+    )
+    return Check(name, bool(expected) and not problems, detail)
+
+
 CHECKS: list[CheckFn] = [
     check_firm_vector_is_sum_of_book_vectors,
     check_firm_var_from_pnl_scenarios,
     check_no_duplicate_nodes,
+    check_stress_firm_pnl_is_sum_of_trades,
 ]
 
 

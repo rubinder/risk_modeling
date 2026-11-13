@@ -21,6 +21,13 @@ HIER_SCHEMA = (
 )
 
 
+def _vector_specs(model):
+    """The shipped vector specs: stress specs need run inputs the P&L tests do not build."""
+    return [
+        s for s in load_specs(None, model) if model.measure(s.measure).measure_class == "vector"
+    ]
+
+
 def _hierarchy(spark):
     return spark.createDataFrame(
         [("B1", "Book 1", "D1", "Desk 1", "BL1", "BL 1", "FIRM", "LE1", "EMEA")], HIER_SCHEMA
@@ -122,7 +129,7 @@ def test_filters_apply_before_aggregation(tiny_market):
 def test_one_pass_for_shared_specs(spark, tiny_market):
     pnl, hierarchy, n = tiny_market
     model = load_model()
-    specs = load_specs(None, model)
+    specs = _vector_specs(model)
     grain = build_reporting_grain(pnl, hierarchy, n)
     out = run_all(specs, model, grain, n)
     # AQE's initial plan: what runs, before any exchange reuse could hide a repeated branch.
@@ -135,7 +142,7 @@ def test_one_pass_for_shared_specs(spark, tiny_market):
 def test_node_vectors_union_both_specs(tiny_market):
     pnl, hierarchy, n = tiny_market
     model = load_model()
-    specs = load_specs(None, model)
+    specs = _vector_specs(model)
     nodes = node_vectors(specs, model, build_reporting_grain(pnl, hierarchy, n), n)
     levels = {r.node_level for r in nodes.select("node_level").distinct().collect()}
     assert levels == {
@@ -150,7 +157,7 @@ def test_node_vectors_union_both_specs(tiny_market):
 def test_run_all_covers_both_shipped_specs(tiny_market):
     pnl, hierarchy, n = tiny_market
     model = load_model()
-    out = run_all(load_specs(None, model), model, build_reporting_grain(pnl, hierarchy, n), n)
+    out = run_all(_vector_specs(model), model, build_reporting_grain(pnl, hierarchy, n), n)
     assert out.columns == METRIC_COLUMNS
     rows = out.collect()
     assert {r.scenario for r in rows} == {"*"}
@@ -173,7 +180,7 @@ def test_run_all_covers_both_shipped_specs(tiny_market):
 def test_partition_and_order_invariance(spark, tiny_market):
     pnl, hierarchy, n = tiny_market
     model = load_model()
-    specs = load_specs(None, model)
+    specs = _vector_specs(model)
     one = run_all(specs, model, build_reporting_grain(pnl.repartition(1), hierarchy, n), n)
     shuffled = pnl.repartition(7).orderBy(F.rand(seed=7))
     seven = run_all(specs, model, build_reporting_grain(shuffled, hierarchy, n), n)
@@ -212,7 +219,7 @@ def test_registered_measure_is_dispatched(spark, tiny_market):
     spec = AggregationSpec("y_total", "y", (("firm_id",),), {}, False)
     row = ("y_total", "y", "firm_id", "FIRM", *["*"] * (len(GRAIN_DIMS) - 1), "*", 1.0)
 
-    def fake(spec_, model_, grain_):
+    def fake(spec_, model_, inputs_):
         return spark.createDataFrame([row], METRIC_COLUMNS)
 
     MEASURE_REGISTRY["y"] = fake

@@ -8,6 +8,7 @@ dimensions:
   asset_class: {label: Asset class, description: Asset class of the position}
   currency: {label: Currency, description: Trade currency}
   risk_class: {label: Risk class, description: Regulatory risk class}
+  scenario: {label: Scenario, description: Stress scenario name, or * where a row is not scenario specific}
   counterparty_id: {label: Counterparty, description: Trade counterparty (not in the vector grain)}
 
 hierarchies:
@@ -48,6 +49,30 @@ measures:
     function: var
     params: {level: 0.99, window: STRESSED, horizon_days: 1}
     table: risk_metrics
+  stress_pnl:
+    label: Stress P&L
+    description: >-
+      Sensitivity-based P&L of the book under a stress scenario. Negative is a loss.
+      Additive within a scenario; slice by scenario, then sum over anything else.
+    unit: USD
+    class: additive
+    function: sum
+    table: stress_results
+    dimensions: [firm_id, business_line_id, desk_id, book_id, legal_entity, region, asset_class, currency, risk_class, scenario]
+  worst_stress_loss:
+    label: Worst stress loss
+    description: >-
+      Loss under the worst stress scenario of the node, as a positive number (negative if every
+      scenario gains). The scenario is in the scenario column of risk_metrics. Not additive:
+      only looked up at the nodes where it was computed.
+    unit: USD
+    class: structured
+    table: risk_metrics
+    computed_at:
+      - [firm_id]
+      - [firm_id, business_line_id]
+      - [firm_id, business_line_id, desk_id]
+      - [firm_id, business_line_id, desk_id, book_id]
 
 tables:
   risk_metrics:
@@ -84,4 +109,19 @@ tables:
       risk_class: {type: STRING, role: dimension}
       window: {type: STRING, role: dimension}
       scenario_idx: {type: INT, role: dimension}
+      pnl: {type: DOUBLE, role: metric}
+  stress_results:
+    columns:
+      as_of_date: {type: DATE, role: time}
+      run_id: {type: STRING, role: dimension}
+      firm_id: {type: STRING, role: dimension}
+      business_line_id: {type: STRING, role: dimension}
+      desk_id: {type: STRING, role: dimension}
+      book_id: {type: STRING, role: dimension}
+      legal_entity: {type: STRING, role: dimension}
+      region: {type: STRING, role: dimension}
+      asset_class: {type: STRING, role: dimension}
+      currency: {type: STRING, role: dimension}
+      risk_class: {type: STRING, role: dimension}
+      scenario: {type: STRING, role: dimension}
       pnl: {type: DOUBLE, role: metric}

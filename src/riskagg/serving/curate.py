@@ -1,6 +1,6 @@
-"""Curated outputs: ``risk_metrics`` and ``pnl_scenarios``, partitioned by as-of date and run.
+"""Curated outputs: ``risk_metrics``, ``pnl_scenarios`` and ``stress_results``, partitioned by as-of date and run.
 
-Both are written with ``as_of_date`` and ``run_id`` as partition directories, and dynamic
+All are written with ``as_of_date`` and ``run_id`` as partition directories, and dynamic
 partition overwrite, so a re-run never touches another run's partition. Reading the table
 root exposes both partition keys as columns.
 """
@@ -42,3 +42,11 @@ def write_pnl_scenarios(grain: DataFrame, ctx: RunContext, n_scenarios: int) -> 
         c for c in load_model().tables["pnl_scenarios"]["columns"] if c not in PARTITION_COLS
     ]
     _write(exploded.select(*columns), ctx, "pnl_scenarios")
+
+
+def write_stress_results(stress_grain: DataFrame, ctx: RunContext) -> None:
+    """Stress P&L at ``GRAIN_DIMS`` x scenario (columns of the model's ``stress_results``)."""
+    columns = [
+        c for c in load_model().tables["stress_results"]["columns"] if c not in PARTITION_COLS
+    ]
+    _write(stress_grain.select(*columns), ctx, "stress_results")

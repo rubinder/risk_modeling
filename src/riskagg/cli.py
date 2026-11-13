@@ -19,8 +19,10 @@ from riskagg.data.org import make_hierarchy, make_risk_factors, make_trades
 from riskagg.data.profiles import PROFILES
 from riskagg.engine import audit
 from riskagg.engine.grain import build_reporting_grain
+from riskagg.engine.inputs import RunInputs
 from riskagg.engine.runner import run_all
 from riskagg.engine.spec import load_specs, spec_hash
+from riskagg.measures.stress import load_scenarios, shock_table
 from riskagg.paths import CONFIG_DIR, semantic_model_path
 from riskagg.semantic.model import load_model
 from riskagg.serving import curate, pinot
@@ -105,14 +107,24 @@ def run(
     specs = load_specs(None, model)
     ctx = new_run(profile, as_of_date, root, spec_hash(specs, reference_paths()))
     spark, owned = _session()
-    grain = None
+    grain = stress_grain = None
     try:
         hierarchy = spark.read.parquet(str(ctx.raw("hierarchy")))
         pnl_vectors = spark.read.parquet(str(ctx.raw("pnl_vectors")))
         grain = build_reporting_grain(pnl_vectors, hierarchy, p.n_scenarios).cache()
-        metrics = run_all(specs, model, grain, p.n_scenarios)
+        inputs = RunInputs(
+            sensitivities=spark.read.parquet(str(ctx.raw("sensitivities"))),
+            trades=spark.read.parquet(str(ctx.raw("trades"))),
+            hierarchy=hierarchy,
+            shocks=shock_table(
+                spark, load_scenarios(), spark.read.parquet(str(ctx.raw("risk_factors")))
+            ),
+        )
+        stress_grain = inputs.stress_grain().cache()
+        metrics = run_all(specs, model, grain, p.n_scenarios, inputs)
         curate.write_risk_metrics(metrics, ctx)
         curate.write_pnl_scenarios(grain, ctx, p.n_scenarios)
+        curate.write_stress_results(stress_grain, ctx)
         audit.write_manifest(
             ctx, {"hierarchy": hierarchy, "pnl_vectors": pnl_vectors}, spark, p.n_scenarios
         )
@@ -130,6 +142,8 @@ def run(
     finally:
         if grain is not None:
             grain.unpersist()
+        if stress_grain is not None:
+            stress_grain.unpersist()
         if owned:
             spark.stop()
 

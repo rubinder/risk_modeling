@@ -2,23 +2,25 @@
 
 Vector specs with the same filters are answered from one ``aggregate_vectors`` call over the
 union of their grouping sets: one scan of the grain, one grouping-sets aggregation. Other
-measure classes are dispatched through ``MEASURE_REGISTRY``.
+measure classes are dispatched through ``MEASURE_REGISTRY`` with the run's ``RunInputs``.
 """
 
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 
 from pyspark.sql import DataFrame
 
+from riskagg.engine.inputs import RunInputs
 from riskagg.engine.spec import AggregationSpec
 from riskagg.engine.vectors import METRIC_COLUMNS, aggregate_vectors, node_level, unique_sets
-from riskagg.measures import var
+from riskagg.measures import stress, var
 from riskagg.semantic.model import SemanticModel, SpecError
 
-MeasureFn = Callable[[AggregationSpec, SemanticModel, DataFrame], DataFrame]
+MeasureFn = Callable[[AggregationSpec, SemanticModel, RunInputs], DataFrame]
 
-# Measure name -> fn(spec, model, grain) returning rows in METRIC_COLUMNS. Later tasks register
-# additive and structured measures here; vector measures are handled by the engine itself.
-MEASURE_REGISTRY: dict[str, MeasureFn] = {}
+# Measure name -> fn(spec, model, inputs) returning rows in METRIC_COLUMNS. ``inputs`` carries
+# the reporting grain and the raw frames of the run. Vector measures are handled by the engine.
+MEASURE_REGISTRY: dict[str, MeasureFn] = {"worst_stress_loss": stress.worst_stress_loss}
 
 FilterKey = tuple[tuple[str, tuple[str, ...]], ...]
 
@@ -70,13 +72,19 @@ def _empty(grain: DataFrame) -> DataFrame:
 
 
 def run_all(
-    specs: Sequence[AggregationSpec], model: SemanticModel, grain: DataFrame, n_scenarios: int
+    specs: Sequence[AggregationSpec],
+    model: SemanticModel,
+    grain: DataFrame,
+    n_scenarios: int,
+    inputs: RunInputs | None = None,
 ) -> DataFrame:
     """All metrics of ``specs`` in ``METRIC_COLUMNS``.
 
     Vector specs are grouped by filters; each group shares one ``node_vectors`` pass. A
-    non-vector spec runs its ``MEASURE_REGISTRY`` entry, and an unregistered one is an error.
+    non-vector spec runs its ``MEASURE_REGISTRY`` entry with ``inputs`` (whose ``grain`` is set
+    to ``grain``), and an unregistered one is an error.
     """
+    inputs = replace(inputs or RunInputs(), grain=grain)
     groups: dict[FilterKey, list[AggregationSpec]] = {}
     others: list[AggregationSpec] = []
     for spec in specs:
@@ -96,7 +104,7 @@ def run_all(
         nodes = node_vectors(group, model, grain, n_scenarios)
         frames.append(_vector_group_metrics(group, model, nodes))
     for spec in others:
-        frames.append(MEASURE_REGISTRY[spec.measure](spec, model, grain).select(*METRIC_COLUMNS))
+        frames.append(MEASURE_REGISTRY[spec.measure](spec, model, inputs).select(*METRIC_COLUMNS))
 
     if not frames:
         return _empty(grain)

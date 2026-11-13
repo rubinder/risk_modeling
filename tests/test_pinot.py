@@ -27,6 +27,7 @@ BROKER = pinot.DEFAULT_BROKER
 SQL = f"{BROKER}/query/sql"
 PREFIX = "riskagg_test_"
 METRICS, VECTORS = PREFIX + "risk_metrics", PREFIX + "pnl_scenarios"
+STRESS = PREFIX + "stress_results"
 
 
 def _count(table: str) -> int:
@@ -65,7 +66,7 @@ def _parquet_rows(served, table: str) -> int:
 @pytest.fixture(scope="module")
 def served(tmp_run, pinot_controller, tmp_path_factory):
     model = prefixed(tmp_run.model, PREFIX)
-    assert set(model.tables) == {METRICS, VECTORS} and model.vector_table == VECTORS
+    assert set(model.tables) == {METRICS, VECTORS, STRESS} and model.vector_table == VECTORS
     root = tmp_path_factory.mktemp("pinot_root")
     (root / "curated").mkdir()
     for table in tmp_run.model.tables:
@@ -105,7 +106,7 @@ def test_demo_tables_are_not_touched(served, pinot_controller):
     def snapshot():
         listed = httpx.get(f"{pinot_controller}/tables", timeout=10).json()["tables"]
         out = {}
-        for table in ("risk_metrics", "pnl_scenarios"):
+        for table in ("risk_metrics", "pnl_scenarios", "stress_results"):
             if table in listed:
                 segs = httpx.get(f"{pinot_controller}/segments/{table}", timeout=10).json()
                 out[table] = (sorted(s for e in segs for s in e.get("OFFLINE", [])), _count(table))
@@ -129,6 +130,18 @@ def test_demo_tables_are_not_touched(served, pinot_controller):
 def test_pinot_and_parquet_agree(served, measure, group_by, filters):
     q = build_query(served.model, measure, group_by, filters, served.as_of_date, served.run_id)
     assert q.table == VECTORS
+    pin, par = _both(served, q)
+    _assert_same(finish(q, pin), finish(q, par), group_by)
+
+
+@pytest.mark.parametrize(
+    "group_by,filters",
+    [(["desk_id", "scenario"], {}), ([], {"scenario": ["GFC_2008"]}), (["region"], {})],
+)
+@pytest.mark.pinot
+def test_stress_pnl_pinot_and_parquet_agree(served, group_by, filters):
+    q = build_query(served.model, "stress_pnl", group_by, filters, served.as_of_date, served.run_id)
+    assert q.table == STRESS
     pin, par = _both(served, q)
     _assert_same(finish(q, pin), finish(q, par), group_by)
 

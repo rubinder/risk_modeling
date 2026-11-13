@@ -12,3 +12,7 @@ def semantic_model_path(path: str | Path | None = None) -> Path:
 
 def aggregations_path(path: str | Path | None = None) -> Path:
     return Path(path) if path is not None else CONFIG_DIR / "aggregations.yaml"
+
+
+def stress_scenarios_path(path: str | Path | None = None) -> Path:
+    return Path(path) if path is not None else CONFIG_DIR / "reference" / "stress_scenarios.yaml"
