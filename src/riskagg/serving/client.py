@@ -54,7 +54,7 @@ class RiskClient:
         as_of: datetime.date | str | None = None,
         **filters: Values,
     ) -> pd.DataFrame:
-        """Group-by dimensions plus ``value``; filters are ``dimension=value(s)``."""
+        """Group-by dimensions, ``scenario`` for scenario-bearing lookups, and ``value``; filters are ``dimension=value(s)``."""
         group_by = _list(group_by)
         filters = {k: _list(v) for k, v in filters.items()}
         if self.service:
@@ -88,7 +88,8 @@ class RiskClient:
         self.run_id = body["run_id"]
         if not body["rows"] and columns:
             return pd.DataFrame(columns=columns)
-        return pd.DataFrame.from_records(body["rows"], columns=columns)
+        # Rows keep the server's column order (dims, any scenario, value).
+        return pd.DataFrame.from_records(body["rows"])
 
     @staticmethod
     def _params(filters: dict[str, list[str]], as_of) -> dict:

@@ -35,21 +35,25 @@ under its worst scenario, reported as a positive number when it is a loss.
 likely. They say nothing about what has not happened lately. A stress test asks a different
 question: "if this specific bad thing happens, what do we lose, and can we survive it?"
 
-- The Basel Committee's 1996 Market Risk Amendment already required banks using internal
-  models to run a rigorous stress-testing programme beside VaR. Stress losses are a check on
-  models that are calibrated to the recent past.
-- After the 2007 to 2009 crisis the Basel Committee issued principles for sound stress-testing
-  practices (2009, revised in 2018), and supervisors made stress testing a routine,
-  forward-looking tool rather than an afterthought.
+- Under the Basel Framework (MAR30.19 to MAR30.23), supervisors approve a bank's internal
+  market-risk model only if the bank runs a routine, rigorous and comprehensive stress-testing
+  programme, at trading-desk level and bank-wide, whose results feed management reporting,
+  capital assessment and limits. Stress losses are a check on models calibrated to the
+  recent past.
+- After the 2007 to 2009 crisis the Basel Committee issued "Principles for sound stress
+  testing practices and supervision" (2009). The 2018 "Stress testing principles" replaced
+  them.
 - In the United States the Federal Reserve's annual supervisory stress tests (CCAR and the
   Dodd-Frank Act stress tests) project capital under a prescribed severely adverse scenario.
   For firms with large trading operations that scenario includes a **global market shock**:
   an instantaneous, hypothetical set of market moves applied to the trading book. This
   project flags one scenario (`GFC_2008`) as the global market shock so that the CCAR page
   can reuse it.
-- The FRTB internal-models approach prices the risk of factors that cannot be modelled from
-  observable prices with a **stress scenario capital requirement**, which is itself a
-  stress loss.
+- Under the FRTB internal-models approach, a risk factor must pass the **risk factor
+  eligibility test**, which is based on how many real price observations (actual
+  transactions or firm quotes) the bank has for it. A factor that fails is a non-modellable
+  risk factor and is capitalised by a **stress scenario capital requirement** instead of
+  by the expected-shortfall model; that charge is itself a stress loss.
 - **Reverse stress testing** inverts the question: find the scenario that breaks the bank.
   That needs a search over scenarios and is not built here.
 
@@ -86,7 +90,8 @@ it is never clipped to zero.
 So the project treats `worst_stress_loss` as a **structured** measure
 (`config/semantic_model.yaml`): computed once at the declared nodes (the four organisation
 levels), stored in `risk_metrics` with the worst scenario's name in the `scenario` column, and
-only looked up. A request for it at any other slice is refused, not approximated. `stress_pnl`
+only looked up (the lookup returns the worst scenario's name beside the loss, because the
+measure is flagged `carries_scenario` in the model). A request for it at any other slice is refused, not approximated. `stress_pnl`
 is an **additive** measure served from its own table, `stress_results`.
 
 **What this does to the Spark design** (`src/riskagg/measures/stress.py`):

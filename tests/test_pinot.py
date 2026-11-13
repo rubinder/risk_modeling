@@ -155,6 +155,13 @@ def test_lookup_and_total_sql_run_on_pinot(served):
     )  # fmt: skip
     pin, par = _both(served, lookup)
     _assert_same(pin, par, ["firm_id"])
+    # A scenario-bearing lookup returns the stored scenario name beside the value.
+    worst = build_query(
+        served.model, "worst_stress_loss", ["firm_id"], {}, served.as_of_date, served.run_id
+    )
+    pin, par = _both(served, worst)
+    assert list(pin.columns) == ["firm_id", "scenario", "value"]
+    _assert_same(pin, par, ["firm_id"])
     # An additive total exercises SUM(...) with COUNT(*) AS "row_count": every P&L cell summed.
     total = Query(VECTORS, (), ("SUM", "pnl"), pinned, "additive", None)
     pin, par = _both(served, total)

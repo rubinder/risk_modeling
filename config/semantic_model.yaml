@@ -67,6 +67,7 @@ measures:
       only looked up at the nodes where it was computed.
     unit: USD
     class: structured
+    carries_scenario: true
     table: risk_metrics
     computed_at:
       - [firm_id]

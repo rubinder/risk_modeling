@@ -345,3 +345,69 @@ def test_shipped_specs_and_measures():
     m = model.measure("stress_pnl")
     assert (m.measure_class, m.table) == ("additive", "stress_results")
     assert m.dimensions == (*model.grain, "scenario")
+
+
+DESK_LEVEL = ["firm_id", "business_line_id", "desk_id"]
+
+
+def _want_worst(run) -> dict[str, tuple[str, float]]:
+    want = _expected_desk_scenario(run)
+    out = {}
+    for desk, g in want.groupby("desk_id"):
+        low = g.sort_values(["value", "scenario"]).iloc[0]
+        out[desk] = (low["scenario"], -low["value"])
+    return out
+
+
+def test_lookup_sql_selects_the_scenario_only_for_scenario_bearing_measures():
+    from riskagg.semantic.query import build_query
+
+    model = load_model()
+    d = datetime.date(2026, 11, 12)
+    q = build_query(model, "worst_stress_loss", DESK_LEVEL, {}, d, "r1")
+    assert q.columns == [*DESK_LEVEL, "scenario", "value"]
+    assert 'SELECT "firm_id", "business_line_id", "desk_id", "scenario", "value" FROM' in (
+        q.to_pinot_sql()
+    )
+    assert "scenario" in q.to_pinot_sql()
+    other = dataclasses_replace_structured(model)
+    plain = build_query(other, "worst_stress_loss", DESK_LEVEL, {}, d, "r1")
+    assert plain.columns == [*DESK_LEVEL, "value"] and '"scenario"' not in plain.to_pinot_sql()
+
+
+def dataclasses_replace_structured(model):
+    import dataclasses
+
+    m = dataclasses.replace(model.measure("worst_stress_loss"), carries_scenario=False)
+    return dataclasses.replace(model, measures={**model.measures, m.name: m})
+
+
+def test_worst_stress_loss_scenario_through_executor_service_and_api(tmp_run):
+    from fastapi.testclient import TestClient
+
+    from riskagg.semantic.query import build_query
+    from riskagg.serving.api import create_app
+    from riskagg.serving.client import RiskClient
+    from riskagg.serving.executors import PandasExecutor
+
+    want = _want_worst(tmp_run)
+    q = build_query(
+        tmp_run.model, "worst_stress_loss", DESK_LEVEL, {}, tmp_run.as_of_date, tmp_run.run_id
+    )
+    raw = PandasExecutor(tmp_run.root).execute(q)
+    assert list(raw.columns) == [*DESK_LEVEL, "scenario", "value"]
+    down = "http://127.0.0.1:9"
+    body = TestClient(create_app(tmp_run.root, broker_url=down, controller_url=down)).get(
+        "/metrics/worst_stress_loss", params={"group_by": ",".join(DESK_LEVEL)}
+    ).json()  # fmt: skip
+    got = {r["desk_id"]: (r["scenario"], r["value"]) for r in body["rows"]}
+    assert set(got) == set(want)
+    for desk, (scenario, loss) in want.items():
+        assert got[desk][0] == scenario and got[desk][1] == pytest.approx(loss, rel=1e-9)
+    frame = RiskClient(root=tmp_run.root).metric("worst_stress_loss", DESK_LEVEL)
+    assert list(frame.columns) == [*DESK_LEVEL, "scenario", "value"]
+    firm = RiskClient(root=tmp_run.root).metric("worst_stress_loss", ["firm_id"])
+    assert list(firm.columns) == ["firm_id", "scenario", "value"] and len(firm) == 1
+    # Measures that do not carry a scenario are unchanged.
+    var = RiskClient(root=tmp_run.root).metric("var_99_1d", ["desk_id"])
+    assert list(var.columns) == ["desk_id", "value"]

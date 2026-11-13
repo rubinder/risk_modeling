@@ -28,6 +28,8 @@ class Measure:
     table: str
     dimensions: tuple[str, ...]
     computed_at: tuple[tuple[str, ...], ...] = ()
+    # A structured measure whose stored rows name a scenario; lookups return it beside the value.
+    carries_scenario: bool = False
 
 
 @dataclass(frozen=True)
@@ -75,6 +77,8 @@ def load_model(path: str | Path | None = None) -> SemanticModel:
             raise SpecError(f"measure '{name}': structured measure needs computed_at")
         if cls != "structured" and computed_at:
             raise SpecError(f"measure '{name}': computed_at only applies to structured measures")
+        if m.get("carries_scenario") and cls != "structured":
+            raise SpecError(f"measure '{name}': carries_scenario only applies to structured measures")
         table = m.get("table")
         if table not in tables:
             raise SpecError(f"measure '{name}': unknown table '{table}'")
@@ -89,6 +93,7 @@ def load_model(path: str | Path | None = None) -> SemanticModel:
             table=table,
             dimensions=dims,
             computed_at=computed_at,
+            carries_scenario=bool(m.get("carries_scenario", False)),
         )
     vector_table = raw.get("vector_table", DEFAULT_VECTOR_TABLE)
     if any(m.measure_class == "vector" for m in measures.values()) and vector_table not in tables:

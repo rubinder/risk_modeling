@@ -37,6 +37,7 @@ class PandasExecutor:
         needed = [
             *query.select_dims,
             *(["scenario_idx"] if query.kind == "vector_scenarios" else []),
+            *(["scenario"] if query.with_scenario else []),
         ]
         df = dataset.to_table(columns=[*needed, source], filter=expression).to_pandas()
         if query.aggregate:

@@ -48,6 +48,7 @@ class Query:
     filters: Mapping[str, Sequence[str]]
     kind: Kind
     post: Measure | None
+    with_scenario: bool = False  # a lookup that also returns the stored ``scenario``
 
     @property
     def value_column(self) -> str:
@@ -64,6 +65,8 @@ class Query:
     def columns(self) -> list[str]:
         """Columns of the rows an executor returns, in order."""
         extra = ["scenario_idx"] if self.kind == "vector_scenarios" else []
+        if self.with_scenario:
+            extra.append("scenario")
         return [*self.select_dims, *extra, self.value_column]
 
     def to_pinot_sql(self) -> str:
@@ -76,6 +79,8 @@ class Query:
         else:
             measure_sql = _ident("value")
         selected = [*(_ident(d) for d in group), measure_sql]
+        if self.with_scenario:
+            selected.insert(len(group), _ident("scenario"))
         if self.needs_row_count:
             selected.append(f"COUNT(*) AS {_ident(ROW_COUNT)}")
         select = ", ".join(selected)
@@ -186,7 +191,9 @@ def build_query(
         )
     _require_valid(m, group_by, filters, "a lookup can only filter on the grouped dimensions")
     fixed = {**pinned, "measure": [m.name], "node_level": ["|".join(level)], **user}
-    return Query(m.table, tuple(level), None, fixed, "lookup", m)
+    return Query(
+        m.table, tuple(level), None, fixed, "lookup", m, with_scenario=m.carries_scenario
+    )
 
 
 def build_drilldown(
@@ -227,7 +234,7 @@ def finish(query: Query, rows: pd.DataFrame) -> pd.DataFrame:
     For ``vector_scenarios`` the per-scenario sums of each group go through the quantile
     convention here (never in SQL) and are scaled by sqrt(horizon_days).
     """
-    out_cols = [*query.select_dims, "value"]
+    out_cols = [*query.select_dims, *(["scenario"] if query.with_scenario else []), "value"]
     if query.kind != "vector_scenarios":
         return rows[out_cols].reset_index(drop=True)
     measure = query.post
