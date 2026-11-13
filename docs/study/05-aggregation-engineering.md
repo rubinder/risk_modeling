@@ -222,7 +222,8 @@ one grouping-sets aggregation.
 `HashAggregate`. Three branches have their own `BroadcastExchange` of the hierarchy and the
 fourth reuses one (`ReusedExchange`). The engine's plan scans once, aggregates to the grain
 (`HashAggregate` / `Exchange` / `HashAggregate`), then `Expand` feeds one more aggregation
-(`HashAggregate` / `Exchange` keyed by `spark_grouping_id` / `HashAggregate`).
+(`HashAggregate` / `Exchange` keyed by the grouping columns and `spark_grouping_id` /
+`HashAggregate`).
 
 **Measured.** 5.00 s against 1.85 s, 2.70× faster for the engine. Per-level reads the trade
 vectors 4 times and shuffles only 3.5 MiB (each branch partially aggregates to very few
@@ -395,8 +396,8 @@ Every number a user sees can be traced to a run, a configuration and its inputs:
 - **Local mode on one machine** (section 7).
 - **A smaller benchmark than designed.** The design called for millions of trades; the
   committed report uses the `bench` profile at 100,000 trades (it was 1,000,000), because the
-  machine it was generated on had about 2 GB of free disk and the benchmark's peak disk use is
-  several times the input (the input, the shuffle files of a run that moves whole vectors,
+  free disk space on the development machine was the limit and the benchmark's peak disk use
+  is several times the input (the input, the shuffle files of a run that moves whole vectors,
   and the previous run's files until Spark deletes them).
 - **Not every tuning technique was measured.** The benchmark has no variant for caching the
   book-grain result or for its storage level (the run caches it with the default), and none
@@ -447,8 +448,9 @@ Every number a user sees can be traced to a run, a configuration and its inputs:
    By default it will not do so if the split would need an extra shuffle; forcing it
    (`spark.sql.adaptive.forceOptimizeSkewedJoin`) here added a shuffle of whole vectors after
    the join, because the aggregate above it had no partial stage. Measured in `skew_join`.
-8. **How does salting work and what does it cost?** Add a salt (here a hash of the trade id modulo 16) to the hot side's key,
-   replicate the other side once per salt, aggregate by (key, salt), then by key. It spreads
+8. **How does salting work and what does it cost?** Add a salt (here a hash of the trade id
+   modulo 16) to the large side's key, replicate the other side once per salt, aggregate by
+   (key, salt), then by key. It spreads
    the hot key over many tasks at the price of a replicated build side, more shuffle records
    and a second aggregation. Code: `skew_join_salted` and `skew_agg_salted`.
 9. **Broadcast or sort-merge for a dimension join?** Broadcast whenever the dimension fits in

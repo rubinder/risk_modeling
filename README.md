@@ -336,3 +336,7 @@ In summary (details and paragraph references on the pages):
 - Java is not used; the project is Python only (PySpark).
 - The regulatory measures are simplified as listed above and are for study, not for
   regulatory reporting.
+
+## License
+
+MIT; see [LICENSE](LICENSE).
