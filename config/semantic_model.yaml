@@ -199,6 +199,10 @@ measures:
 
 tables:
   risk_metrics:
+    description: >-
+      One row per aggregation, measure and node of the official run. node_level names the node's
+      grouping set (dimensions joined by |); a dimension the node does not group by holds *.
+      Every measure here is looked up, never summed across rows.
     columns:
       as_of_date: {type: DATE, role: time}
       run_id: {type: STRING, role: dimension}
@@ -218,6 +222,10 @@ tables:
       scenario: {type: STRING, role: dimension}
       value: {type: DOUBLE, role: metric}
   pnl_scenarios:
+    description: >-
+      P&L per scenario (scenario_idx) and window at the reporting grain: the source of every VaR
+      and ES query. Additive across rows of one window and one scenario_idx only; a VaR or ES is
+      a quantile of a group's per-scenario sums.
     columns:
       as_of_date: {type: DATE, role: time}
       run_id: {type: STRING, role: dimension}
@@ -234,6 +242,9 @@ tables:
       scenario_idx: {type: INT, role: dimension}
       pnl: {type: DOUBLE, role: metric}
   stress_results:
+    description: >-
+      Stress P&L per scenario at the reporting grain (gains positive). Additive across rows of
+      one scenario; never summed across scenarios.
     columns:
       as_of_date: {type: DATE, role: time}
       run_id: {type: STRING, role: dimension}
@@ -249,6 +260,10 @@ tables:
       scenario: {type: STRING, role: dimension}
       pnl: {type: DOUBLE, role: metric}
   frtb_sa_detail:
+    description: >-
+      FRTB SA bucket detail per node, risk class, component (DELTA, VEGA, CURVATURE), bucket and
+      correlation scenario: k_b is the bucket charge, s_b the bucket's signed sum of weighted
+      sensitivities. Neither may be summed over buckets, nodes or scenarios.
     # Not additive: k_b is a bucket charge (a square root) and s_b a signed bucket sum; neither
     # may be summed over buckets, nodes or scenarios. No measure is served from this table, so
     # no Pinot star-tree is built for it. Read it with the drill-down.
@@ -266,6 +281,12 @@ tables:
       k_b: {type: DOUBLE, role: metric}
       s_b: {type: DOUBLE, role: metric}
   frtb_ima_detail:
+    description: >-
+      FRTB IMA expected shortfalls per node and risk-class scope (risk_class * is all classes
+      together), each liquidity-horizon adjusted: es_fc for the full set of risk factors on the
+      current window, es_rc for the reduced set on the current window, es_rs for the reduced set
+      on the stressed window, and es = es_rs x max(es_fc / es_rc, 1). None may be summed over
+      nodes or risk classes.
     # Not additive: every column is an expected shortfall (or a stress-scaled one) of a node and
     # risk-class scope (risk_class * = all classes together); none may be summed over nodes or
     # risk classes. No measure is served from this table, so no Pinot star-tree is built.
@@ -282,6 +303,11 @@ tables:
       es_rs: {type: DOUBLE, role: metric}
       es: {type: DOUBLE, role: metric}
   ccar_projection:
+    description: >-
+      The CCAR path: one row per scenario, projected quarter (1 to 9) and node (node_level
+      BUSINESS_LINE, LEGAL_ENTITY or FIRM). Loss and revenue columns add across nodes of one
+      level within a scenario and quarter; cet1, rwa and cet1_ratio are null for business lines
+      and are levels on a path, never summed over quarters or levels.
     # The CCAR path: one row per scenario, projected quarter (1..9) and node. node_level is
     # BUSINESS_LINE, LEGAL_ENTITY or FIRM; never sum across levels (each level already holds the
     # whole firm). Loss and revenue columns are additive across nodes of one level within a

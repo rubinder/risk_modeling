@@ -518,6 +518,10 @@ Internal models approach (`src/riskagg/measures/frtb_ima.py`, `src/riskagg/data/
 - **IMCC only**: no SES for non-modellable factors, no IMA default risk charge, no 60-day
   average, no multiplier, every desk treated as eligible (no backtesting, PLA or desk
   approval).
+- **IMA reconciliation check assumes unfiltered specifications**: the audit check that
+  recomputes the firm's `frtb_imcc` and its two parts from the raw vectors assumes the firm rows
+  come from a specification with no filters; a filtered firm node would need the filter applied
+  in the check too (`check_frtb_imcc_from_raw` in `src/riskagg/engine/audit.py`).
 
 ## 7. Likely interview questions
 

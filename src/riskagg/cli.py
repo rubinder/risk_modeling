@@ -1,4 +1,5 @@
-"""Command line: ``generate``, ``run``, ``load-pinot``, ``serve``, ``query`` and ``bench``."""
+"""Command line: ``generate``, ``run``, ``load-pinot``, ``serve``, ``query``, ``bench`` and
+``dictionary``."""
 
 import datetime
 from pathlib import Path
@@ -42,6 +43,7 @@ ProfileOpt = typer.Option("--profile", help=f"One of {', '.join(PROFILES)}")
 AsOfOpt = typer.Option("--as-of", help="As-of date, YYYY-MM-DD (default: today)")
 BenchOutOpt = typer.Option(REPO_ROOT / "docs/benchmarks/report.md", "--out")
 RepeatsOpt = typer.Option(3, "--repeats", min=1, help="Timed runs per variant")
+DictionaryOutOpt = typer.Option(REPO_ROOT / "docs/data-dictionary.md", "--out")
 
 
 def _profile(name: str):
@@ -275,4 +277,13 @@ def bench(
     measurements = run_benchmark(p, out, repeats=repeats)
     for m in measurements:
         typer.echo(f"  {m.variant.group:<20} {m.variant.name:<26} {m.median:8.2f} s")
+    typer.echo(f"wrote {out}")
+
+
+@app.command()
+def dictionary(out: Path = DictionaryOutOpt) -> None:
+    """Write the data dictionary (Markdown) generated from the semantic model."""
+    from riskagg.semantic.dictionary import write_dictionary
+
+    write_dictionary(load_model(), out)
     typer.echo(f"wrote {out}")
