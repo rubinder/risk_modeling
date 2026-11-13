@@ -45,6 +45,20 @@ BenchOutOpt = typer.Option(REPO_ROOT / "docs/benchmarks/report.md", "--out")
 RepeatsOpt = typer.Option(3, "--repeats", min=1, help="Timed runs per variant")
 DictionaryOutOpt = typer.Option(REPO_ROOT / "docs/data-dictionary.md", "--out")
 
+# The raw datasets ``run`` reads (``exposures`` only feeds the generator). Each is recorded in
+# the manifest with its row count and checksum.
+RUN_INPUTS = (
+    "hierarchy",
+    "pnl_vectors",
+    "sensitivities",
+    "trades",
+    "risk_factors",
+    "default_risk_positions",
+    "banking_book",
+    "macro_scenarios",
+    "capital_start",
+)
+
 
 def _profile(name: str):
     if name not in PROFILES:
@@ -125,22 +139,20 @@ def run(
     spark, owned = _session()
     grain = stress_grain = projection = inputs = None
     try:
-        hierarchy = spark.read.parquet(str(ctx.raw("hierarchy")))
-        pnl_vectors = spark.read.parquet(str(ctx.raw("pnl_vectors")))
-        grain = build_reporting_grain(pnl_vectors, hierarchy, p.n_scenarios).cache()
+        # Every raw dataset the run reads, read once here and recorded in the manifest.
+        raw = {name: spark.read.parquet(str(ctx.raw(name))) for name in RUN_INPUTS}
+        grain = build_reporting_grain(raw["pnl_vectors"], raw["hierarchy"], p.n_scenarios).cache()
         inputs = RunInputs(
             grain=grain,
             n_scenarios=p.n_scenarios,
-            sensitivities=spark.read.parquet(str(ctx.raw("sensitivities"))),
-            trades=spark.read.parquet(str(ctx.raw("trades"))),
-            hierarchy=hierarchy,
-            default_risk_positions=spark.read.parquet(str(ctx.raw("default_risk_positions"))),
-            shocks=shock_table(
-                spark, load_scenarios(), spark.read.parquet(str(ctx.raw("risk_factors")))
-            ),
-            banking_book=spark.read.parquet(str(ctx.raw("banking_book"))),
-            macro_scenarios=spark.read.parquet(str(ctx.raw("macro_scenarios"))),
-            capital_start=spark.read.parquet(str(ctx.raw("capital_start"))),
+            sensitivities=raw["sensitivities"],
+            trades=raw["trades"],
+            hierarchy=raw["hierarchy"],
+            default_risk_positions=raw["default_risk_positions"],
+            shocks=shock_table(spark, load_scenarios(), raw["risk_factors"]),
+            banking_book=raw["banking_book"],
+            macro_scenarios=raw["macro_scenarios"],
+            capital_start=raw["capital_start"],
         )
         stress_grain = inputs.stress_grain().cache()
         projection = inputs.ccar_projection().cache()
@@ -153,19 +165,7 @@ def run(
         ima_levels = [list(c) for c in model.measure("frtb_imcc").computed_at]
         curate.write_frtb_ima_detail(ima_detail(inputs, ima_levels), ctx)
         curate.write_ccar_projection(projection, ctx)
-        audit.write_manifest(
-            ctx,
-            {
-                "hierarchy": hierarchy,
-                "pnl_vectors": pnl_vectors,
-                "default_risk_positions": inputs.default_risk_positions,
-                "banking_book": inputs.banking_book,
-                "macro_scenarios": inputs.macro_scenarios,
-                "capital_start": inputs.capital_start,
-            },
-            spark,
-            p.n_scenarios,
-        )
+        audit.write_manifest(ctx, raw, spark, p.n_scenarios)
         checks = audit.reconcile(ctx, spark)
         audit.record_reconciliation(ctx, checks)
         for c in checks:

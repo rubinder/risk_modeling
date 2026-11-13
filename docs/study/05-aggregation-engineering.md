@@ -359,21 +359,31 @@ about **plans and bytes**, which do transfer, more than about **seconds**, which
 
 Every number a user sees can be traced to a run, a configuration and its inputs:
 
-- **Every output row** carries `run_id` and `as_of_date` (the partition directories of every
-  curated table, written with dynamic partition overwrite so a re-run never touches another
-  run's partition), and `risk_metrics` rows carry `spec_hash`, a hash of the specifications
-  and the reference data (`src/riskagg/serving/curate.py`, `spec_hash` in
-  `src/riskagg/engine/spec.py`).
+- **Every output row** of every curated table carries `run_id` and `as_of_date` (the
+  partition directories, written with dynamic partition overwrite so a re-run never touches
+  another run's partition) and `spec_hash`, a hash of the specifications and the reference
+  data (`_write` in `src/riskagg/serving/curate.py`, `spec_hash` in
+  `src/riskagg/engine/spec.py`). Pinot holds the same three columns.
 - **A run manifest** (`runs/<run_id>/manifest.json`, `write_manifest` in
-  `src/riskagg/engine/audit.py`) records each input dataset's row count and an
-  order-independent checksum, the Spark version and the session settings that affect results,
-  and the git commit of the code.
+  `src/riskagg/engine/audit.py`) records the row count and an order-independent checksum of
+  every raw dataset the run reads (`RUN_INPUTS` in `src/riskagg/cli.py`), the Spark version
+  and the session settings that affect results, and the git commit of the code (with
+  `-dirty` when tracked files had uncommitted changes).
 - **Reconciliation reads what was written to disk**, never in-memory frames, and uses
-  different code from the engine: the firm vector from raw trades equals the sum of the
-  curated book vectors; firm VaR and ES equal the measure of the curated firm vector; no node
-  appears twice; firm stress P&L equals the sum over raw trades; the FRTB SA total equals its
-  components; the firm IMCC is rebuilt from raw vectors; CCAR is rebuilt in plain Python
-  (`CHECKS` in `audit.py`).
+  different code from the engine: every curated `pnl_scenarios` cell (grain node, window,
+  scenario) equals the raw trade vectors of that cell, so P&L moved between books or
+  relabelled to another desk fails even when the firm total is unchanged; every vector-measure
+  row in `risk_metrics` (each node of each specification, with its sum-of-children,
+  diversification and incremental rows) equals a recomputation from the curated
+  `pnl_scenarios`; no node appears twice; firm stress P&L equals the sum over raw trades; the
+  FRTB SA total equals its components, and the firm DRC and RRAO are rebuilt in plain Python
+  from the raw positions and trades; the firm IMCC is rebuilt from raw vectors; CCAR is
+  rebuilt in plain Python (`CHECKS` in `audit.py`).
+- **What the checks do not cover.** The SBM charge is not recomputed per run: it is pinned by
+  the golden tests of the FRTB worked example and by the NumPy reference in
+  `tests/reference/np_frtb.py`. The stress check rebuilds the firm P&L from raw sensitivities
+  but takes each factor's shock from the engine's `Scenario.shock_for`, so that part is not
+  independent code.
 - **A run becomes official only if every check passes** (`mark_official` in
   `src/riskagg/context.py`); the serving layer reads only official runs.
 

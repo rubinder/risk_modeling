@@ -365,6 +365,7 @@ Every query of `var_99_1d`, `var_99_10d`, `es_975_1d`, `svar_99_1d` is answered 
 |---|---|---|---|
 | `as_of_date` | DATE | time | no |
 | `run_id` | STRING | dimension | no |
+| `spec_hash` | STRING | dimension | no |
 | `firm_id` | STRING | dimension | no |
 | `business_line_id` | STRING | dimension | no |
 | `desk_id` | STRING | dimension | no |
@@ -388,6 +389,7 @@ Measures stored in it: `stress_pnl`.
 |---|---|---|---|
 | `as_of_date` | DATE | time | no |
 | `run_id` | STRING | dimension | no |
+| `spec_hash` | STRING | dimension | no |
 | `firm_id` | STRING | dimension | no |
 | `business_line_id` | STRING | dimension | no |
 | `desk_id` | STRING | dimension | no |
@@ -410,6 +412,7 @@ No measure is stored in it: read it with the drill-down.
 |---|---|---|---|
 | `as_of_date` | DATE | time | no |
 | `run_id` | STRING | dimension | no |
+| `spec_hash` | STRING | dimension | no |
 | `node_level` | STRING | dimension | no |
 | `firm_id` | STRING | dimension | no |
 | `business_line_id` | STRING | dimension | no |
@@ -431,6 +434,7 @@ No measure is stored in it: read it with the drill-down.
 |---|---|---|---|
 | `as_of_date` | DATE | time | no |
 | `run_id` | STRING | dimension | no |
+| `spec_hash` | STRING | dimension | no |
 | `node_level` | STRING | dimension | no |
 | `firm_id` | STRING | dimension | no |
 | `business_line_id` | STRING | dimension | no |
@@ -451,6 +455,7 @@ No measure is stored in it: read it with the drill-down.
 |---|---|---|---|
 | `as_of_date` | DATE | time | no |
 | `run_id` | STRING | dimension | no |
+| `spec_hash` | STRING | dimension | no |
 | `scenario` | STRING | dimension | no |
 | `quarter` | INT | dimension | no |
 | `node_level` | STRING | dimension | no |

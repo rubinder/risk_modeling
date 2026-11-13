@@ -234,18 +234,25 @@ uv run jupyter nbconvert --to notebook --execute --output-dir /tmp notebooks/rep
 
 - **Run id and as-of date** on every curated row: each table is partitioned by
   `as_of_date=<d>/run_id=<r>`, and a re-run never overwrites another run's partition.
-- **Spec hash** on every `risk_metrics` row: a hash of the aggregation specs and of the
-  semantic model and reference files (`spec_hash` in `src/riskagg/engine/spec.py`).
+- **Spec hash** on every row of every curated table, in Parquet and in Pinot: a hash of the
+  aggregation specs and of the semantic model and reference files (`spec_hash` in
+  `src/riskagg/engine/spec.py`).
 - **Manifest** `runs/<run_id>/manifest.json`: row count and order-independent checksum of
-  the input datasets (P&L vectors, hierarchy, default-risk positions, banking book, macro
-  scenarios, starting capital), the Spark version and the session settings the project sets,
+  every raw dataset the run reads (P&L vectors, hierarchy, sensitivities, trades, risk
+  factors, default-risk positions, banking book, macro scenarios, starting capital), the
+  Spark version and the session settings the project sets,
   the git commit, and the reconciliation results (`write_manifest` in
   `src/riskagg/engine/audit.py`).
 - **Reconciliation checks** read what was written to disk and use separate code from the
-  engine: the firm vector from raw trades equals the sum of the curated book vectors; firm
-  VaR equals the quantile of the curated firm P&L; no node appears twice; firm stress P&L
-  equals the sum over raw trades; the FRTB SA total equals its components; the firm IMCC is
-  rebuilt from raw vectors; CCAR is rebuilt in plain Python.
+  engine: every curated P&L cell (grain node, window, scenario) equals the raw trade vectors
+  of that cell; every stored VaR and ES row, at every node and with its diversification rows,
+  equals the quantile of the curated P&L; no node appears twice; firm stress P&L equals the
+  sum over raw trades; the FRTB SA total equals its components, and the firm DRC and RRAO are
+  rebuilt in plain Python from raw positions and trades; the firm IMCC is rebuilt from raw
+  vectors; CCAR is rebuilt in plain Python. Not checked per run: the SBM charge, which is
+  pinned by the golden tests and the NumPy reference (`tests/reference/np_frtb.py`) instead;
+  and the stress check takes each factor's shock from the engine's `Scenario.shock_for`, so
+  that part is not independent code.
 - **Official run**: only a run that passes every check is written to `runs/official.json`,
   and only official runs are loaded into Pinot or served.
 
@@ -299,8 +306,7 @@ In summary (details and paragraph references on the pages):
 
 - [VaR and ES](docs/study/01-var-es.md#4-what-this-project-simplifies-compared-with-a-real-bank):
   square-root-of-time scaling for multi-day horizons; a one-factor-per-class market model;
-  a synthetic stressed window; scenario P&L linear in factor returns; the firm VaR check
-  assumes unfiltered specs.
+  a synthetic stressed window; scenario P&L linear in factor returns.
 - [Stress testing](docs/study/02-stress.md#4-what-this-project-simplifies-compared-with-a-real-bank):
   sensitivity-based (delta, gamma, vega) P&L instead of full revaluation; hand-set,
   uncalibrated scenarios; instantaneous shocks.

@@ -193,6 +193,20 @@ def test_drilldown_on_pinot(served):
 
 
 @pytest.mark.pinot
+@pytest.mark.parametrize("table", [METRICS, VECTORS, STRESS, FRTB_DETAIL, IMA_DETAIL, CCAR])
+def test_every_table_carries_run_and_spec_hash_on_pinot_and_parquet(served, table):
+    d = build_drilldown(served.model, table, {}, served.as_of_date, served.run_id, 5)
+    pin = PinotExecutor(BROKER).fetch(d)
+    par = PandasExecutor(served.root).fetch(d)
+    assert list(pin.columns) == list(par.columns) == list(served.model.tables[table]["columns"])
+    for df in (pin, par):
+        assert len(df) > 0 and {"as_of_date", "run_id", "spec_hash"} <= set(df.columns)
+        assert set(df["run_id"]) == {served.run_id}
+        (spec_hash,) = set(df["spec_hash"])
+        assert spec_hash and set(pin["spec_hash"]) == set(par["spec_hash"])
+
+
+@pytest.mark.pinot
 def test_ccar_drilldown_keeps_nulls_on_pinot(served):
     """Business lines have no capital: Pinot returns null, as Parquet does, never 0."""
     d = build_drilldown(served.model, CCAR, {}, served.as_of_date, served.run_id, 1000)

@@ -229,6 +229,7 @@ tables:
     columns:
       as_of_date: {type: DATE, role: time}
       run_id: {type: STRING, role: dimension}
+      spec_hash: {type: STRING, role: dimension}
       firm_id: {type: STRING, role: dimension}
       business_line_id: {type: STRING, role: dimension}
       desk_id: {type: STRING, role: dimension}
@@ -248,6 +249,7 @@ tables:
     columns:
       as_of_date: {type: DATE, role: time}
       run_id: {type: STRING, role: dimension}
+      spec_hash: {type: STRING, role: dimension}
       firm_id: {type: STRING, role: dimension}
       business_line_id: {type: STRING, role: dimension}
       desk_id: {type: STRING, role: dimension}
@@ -270,6 +272,7 @@ tables:
     columns:
       as_of_date: {type: DATE, role: time}
       run_id: {type: STRING, role: dimension}
+      spec_hash: {type: STRING, role: dimension}
       node_level: {type: STRING, role: dimension}
       firm_id: {type: STRING, role: dimension}
       business_line_id: {type: STRING, role: dimension}
@@ -293,6 +296,7 @@ tables:
     columns:
       as_of_date: {type: DATE, role: time}
       run_id: {type: STRING, role: dimension}
+      spec_hash: {type: STRING, role: dimension}
       node_level: {type: STRING, role: dimension}
       firm_id: {type: STRING, role: dimension}
       business_line_id: {type: STRING, role: dimension}
@@ -319,6 +323,7 @@ tables:
     columns:
       as_of_date: {type: DATE, role: time}
       run_id: {type: STRING, role: dimension}
+      spec_hash: {type: STRING, role: dimension}
       scenario: {type: STRING, role: dimension}
       quarter: {type: INT, role: dimension}
       node_level: {type: STRING, role: dimension}
