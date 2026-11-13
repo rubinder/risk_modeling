@@ -117,8 +117,8 @@ the parent either.
 - Trades are reduced once to a **reporting grain**: one vector per book × legal entity ×
   region × asset class × currency × risk class × liquidity horizon × reduced-set flag ×
   window (`build_reporting_grain` in `engine/grain.py`; FRTB IMA needs the liquidity horizon
-  and the reduced-set flag, and VaR and ES sum over them). Every hierarchy node is built from that small result, not from
-  trades.
+  and the reduced-set flag, and VaR and ES sum over them). Every hierarchy node is built
+  from that small result, not from trades.
 - All the nodes the specifications ask for are built in one grouping-sets pass
   (`aggregate_vectors`); only declared groupings are computed, never the full cube.
 - VaR, ES, sum of children, diversification and incremental VaR are then derived from the
