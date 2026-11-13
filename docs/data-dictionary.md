@@ -353,7 +353,7 @@ Measures stored in it: `var_99_1d`, `var_99_10d`, `es_975_1d`, `svar_99_1d`, `wo
 Derived rows stored in it (see below): `var_99_1d__sum_children`, `var_99_1d__diversification`, `var_99_1d__incremental`, `var_99_10d__sum_children`, `var_99_10d__diversification`, `var_99_10d__incremental`, `es_975_1d__sum_children`, `es_975_1d__diversification`, `es_975_1d__incremental`, `svar_99_1d__sum_children`, `svar_99_1d__diversification`, `svar_99_1d__incremental`.
 
 - `<measure>__sum_children`: At a parent node: the sum of the standalone values of its children at the next org level of the specification. The one deliberate sum of vector-measure values, shown beside the parent's own value; never a substitute for it.
-- `<measure>__diversification`: At a parent node: <measure>__sum_children minus the parent's own value, the diversification benefit. Never negative for ES (subadditive); it can be negative for VaR.
+- `<measure>__diversification`: At a parent node: `<measure>__sum_children` minus the parent's own value, the diversification benefit. Never negative for ES (subadditive); it can be negative for VaR.
 - `<measure>__incremental`: At a child node: the parent's value minus the value of the parent's vector without this child, with the same function, level, window and horizon. Negative for a hedge; not the child's standalone value, and the children's incrementals do not add up to the parent.
 
 | Column | Type | Role | Nullable |

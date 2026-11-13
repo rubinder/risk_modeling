@@ -211,7 +211,7 @@ tables:
         level of the specification. The one deliberate sum of vector-measure values, shown
         beside the parent's own value; never a substitute for it.
       diversification: >-
-        At a parent node: <measure>__sum_children minus the parent's own value, the diversification
+        At a parent node: `<measure>__sum_children` minus the parent's own value, the diversification
         benefit. Never negative for ES (subadditive); it can be negative for VaR.
       incremental: >-
         At a child node: the parent's value minus the value of the parent's vector without
