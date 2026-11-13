@@ -350,7 +350,10 @@ def test_shipped_specs_and_measures():
     ]:  # fmt: skip
         spec = specs[name]
         assert (spec.measure, spec.grouping_sets, spec.filters, spec.diversification) == (
-            measure, org_sets, {}, True
+            measure,
+            org_sets,
+            {},
+            True,
         ), name
     assert "stress_pnl" not in {s.measure for s in load_specs(None, model)}  # served by query
     m = model.measure("stress_pnl")

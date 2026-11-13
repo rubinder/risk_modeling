@@ -84,8 +84,7 @@ def _precomputed(m: Measure, specs: Sequence[AggregationSpec]) -> str:
     stored = stored_by(specs, m.name)
     if not stored:
         return (
-            f"not stored in `{m.table}`: no specification in `config/aggregations.yaml` "
-            "declares it"
+            f"not stored in `{m.table}`: no specification in `config/aggregations.yaml` declares it"
         )
     parts = []
     for s in stored:
@@ -106,8 +105,13 @@ def _measure(model: SemanticModel, m: Measure, specs: Sequence[AggregationSpec])
     ]
     if m.params:
         rows.append(_row("Parameters", ", ".join(f"{k} {v}" for k, v in m.params.items())))
+    declared = bool(stored_by(specs, m.name))
     if m.measure_class == "vector":
-        source = f"queries: `{model.vector_table}`; precomputed nodes: `{m.table}`"
+        source = f"queries: `{model.vector_table}`"
+        if declared:
+            source += f"; precomputed nodes: `{m.table}`"
+    elif m.measure_class == "structured" and not declared:
+        source = f"`{m.table}`, which holds no rows of it (see Precomputed)"
     else:
         source = f"`{m.table}`"
     rows.append(_row("Answered from", source))
@@ -180,9 +184,7 @@ def _table(
     return [*lines, ""]
 
 
-def render_dictionary(
-    model: SemanticModel, specs: Sequence[AggregationSpec] | None = None
-) -> str:
+def render_dictionary(model: SemanticModel, specs: Sequence[AggregationSpec] | None = None) -> str:
     """The dictionary of ``model``; what is precomputed comes from ``specs`` (default: the
     shipped ``config/aggregations.yaml``)."""
     specs = load_specs(None, model) if specs is None else specs

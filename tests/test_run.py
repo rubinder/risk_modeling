@@ -259,7 +259,9 @@ def test_reconcile_detects_pnl_moved_within_the_firm(spark, official, tmp_path, 
         .select("window", F.posexplode("pnl").alias("scenario_idx", "pnl"))
         .groupBy("window", "scenario_idx").agg(F.sum("pnl").alias("raw"))
     )  # fmt: skip
-    worst = firm.join(raw, ["window", "scenario_idx"]).agg(F.max(F.abs(F.col("pnl") - F.col("raw"))))
+    worst = firm.join(raw, ["window", "scenario_idx"]).agg(
+        F.max(F.abs(F.col("pnl") - F.col("raw")))
+    )
     assert worst.first()[0] < 1e-6  # the firm vector is unchanged
     assert "pnl_scenarios_equal_raw_per_grain_cell" in _failed(audit.reconcile(ctx, spark))
 

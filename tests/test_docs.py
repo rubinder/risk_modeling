@@ -90,6 +90,11 @@ def test_dictionary_lists_a_vector_measure_as_stored_only_when_a_spec_declares_i
     assert "`var_99_1d`" in stored
     measure = _section_of(without, "### `var_99_10d`")
     assert "no specification" in measure and "risk_metrics" in measure
+    # the "Answered from" row agrees: only queries, no precomputed nodes
+    assert "| Answered from | queries: `pnl_scenarios` |" in measure
+    assert "| Answered from | queries: `pnl_scenarios`; precomputed nodes: `risk_metrics` |" in (
+        _section_of(full, "### `var_99_10d`")
+    )
 
 
 def test_committed_dictionary_is_current():
