@@ -398,6 +398,10 @@ Every number a user sees can be traced to a run, a configuration and its inputs:
   machine it was generated on had about 2 GB of free disk and the benchmark's peak disk use is
   several times the input (the input, the shuffle files of a run that moves whole vectors,
   and the previous run's files until Spark deletes them).
+- **Not every tuning technique was measured.** The benchmark has no variant for caching the
+  book-grain result or for its storage level (the run caches it with the default), and none
+  for the partitioning and file layout of the curated outputs (partition directories by date
+  and run, Spark's default file sizes). Whatever this page says about them is reasoning.
 - **No incremental processing**: every run recomputes from raw. A production platform would
   aggregate only the books whose trades changed and reuse yesterday's grain for the rest
   (reasoning).
