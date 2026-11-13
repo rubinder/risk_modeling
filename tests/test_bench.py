@@ -1,17 +1,18 @@
 """Benchmark: every group's variants agree, and the report has a measured row per variant.
 
 Runs on the bench profile cut to 5,000 trades and 50 scenarios, so the skewed desk is present
-but the suite stays fast (the generated code for 250 element sums is slow to compile).
+but the suite stays fast (with 250 element sums every small query took far longer).
 """
 
 import dataclasses
 import datetime
 import re
 
+import httpx
 import numpy as np
 import pytest
 
-from riskagg.bench.runner import assert_group_agrees, run_benchmark
+from riskagg.bench.runner import _run_stats, assert_group_agrees, run_benchmark
 from riskagg.bench.variants import Inputs, variants
 from riskagg.data.market import make_exposures, make_pnl_vectors
 from riskagg.data.org import make_hierarchy, make_risk_factors, make_trades
@@ -104,19 +105,94 @@ def test_report_has_a_measured_row_per_variant(spark, tmp_path):
         assert re.fullmatch(r"\d+\.\d+", median), rows[0]
         assert re.fullmatch(r"\d+\.\d+-\d+\.\d+", spread), rows[0]
         assert re.fullmatch(r"[\d,]+\.\d+", read) and re.fullmatch(r"[\d,]+\.\d+", write)
-    assert "Apple" in text or "CPU" in text
+    cpu = re.search(r"^\| CPU \| (.*) \|$", text, re.MULTILINE)
+    assert cpu and cpu.group(1).strip() not in ("", "unknown"), cpu
     assert f"{PROFILE.n_trades:,}" in text
 
 
+class _FakeApi:
+    """The REST calls ``_run_stats`` makes; stage 2 is missing from the status store."""
+
+    def executions(self, tag):
+        return [{"id": 0, "status": "COMPLETED", "failedJobIds": [], "successJobIds": [0]}]
+
+    def get(self, path, **params):
+        if path == "/jobs/0":
+            return {"stageIds": [1, 2]}
+        if path == "/stages/2":
+            request = httpx.Request("GET", "http://127.0.0.1/stages/2")
+            raise httpx.HTTPStatusError("404", request=request, response=httpx.Response(404))
+        if path == "/stages/1":
+            return [{
+                "status": "COMPLETE", "attemptId": 0, "shuffleReadBytes": 1,
+                "shuffleWriteBytes": 1, "shuffleWriteRecords": 1, "numTasks": 1,
+            }]  # fmt: skip
+        if path.endswith("/taskSummary"):
+            return {"peakExecutionMemory": [1.0, 1.0], "executorRunTime": [1.0, 1.0]}
+        return {"planDescription": "== Physical Plan ==\n"}
+
+
+def test_a_stage_missing_from_the_rest_api_fails_the_run():
+    with pytest.raises(RuntimeError, match=r"no data for stages \[2\]"):
+        _run_stats(_FakeApi(), "bench x", 1.0)
+
+
 _NUMBER = re.compile(r"(?<![\w.])\d+(?:,\d{3})*(?:\.\d+)?(?![\w])")
+# Sections of the study page that quote the report.
+QUOTING_SECTIONS = ("## 6. What the benchmark measured", "## 7. What does not transfer")
+
+
+def _section(page: str, heading: str) -> str:
+    return page.split(heading, 1)[1].split("\n## ", 1)[0]
+
+
+def _table(report: str) -> dict[str, list[str]]:
+    """Report table cells by variant name."""
+    rows = {}
+    for ln in report.splitlines():
+        m = re.match(r"\| `(\w+)` \|", ln)
+        if m:
+            rows[m.group(1)] = [c.strip() for c in ln.strip().strip("|").split("|")]
+    return rows
 
 
 def test_study_page_quotes_only_numbers_from_the_report():
-    """Every number in the page's benchmark section appears in the generated report."""
+    """Every number in the sections that quote the report appears in the report."""
     page = STUDY_PAGE.read_text()
-    report = REPORT.read_text()
-    section = page.split("## 6. What the benchmark measured", 1)[1].split("\n## ", 1)[0]
-    quoted = set(_NUMBER.findall(section))
-    assert quoted, "the benchmark section quotes no numbers"
-    report_numbers = set(_NUMBER.findall(report))
-    assert quoted <= report_numbers, sorted(quoted - report_numbers)
+    report_numbers = set(_NUMBER.findall(REPORT.read_text()))
+    for heading in QUOTING_SECTIONS:
+        quoted = set(_NUMBER.findall(_section(page, heading)))
+        assert quoted, f"{heading} quotes no numbers"
+        assert quoted <= report_numbers, (heading, sorted(quoted - report_numbers))
+
+
+def test_study_page_quotes_the_right_variant():
+    """Key figures sit next to the variant they belong to, as in the report's tables."""
+    page = STUDY_PAGE.read_text()
+    t = _table(REPORT.read_text())
+
+    def med(v: str) -> str:
+        return t[v][1]
+
+    def write(v: str) -> str:
+        return t[v][4]
+
+    expected = [
+        f"{med('explode_regroup')} s against {med('array_index_sum')} s",
+        f"{med('per_level_from_trades')} s against {med('grain_then_grouping_sets')} s",
+        (
+            f"Plain {med('skew_agg_plain')} s, AQE settings {med('skew_agg_aqe_skew_join')} s, "
+            f"salted {med('skew_agg_salted')} s"
+        ),
+        f"Plain {med('skew_join_plain')} s; AQE forced {med('skew_join_aqe_skew_join')} s",
+        (
+            f"shuffle write {write('skew_join_aqe_skew_join')} MiB\nagainst "
+            f"{write('skew_join_plain')} MiB"
+        ),
+        f"{med('sort_merge')} s against {med('broadcast')} s",
+        f"{med('static_200')} s at 200 static partitions, {med('sized_to_data')} s sized",
+        f"shuffled {write('sort_merge')} MiB",
+    ]
+    flat = " ".join(page.split())
+    for phrase in expected:
+        assert " ".join(phrase.split()) in flat, phrase

@@ -153,11 +153,13 @@ def _run_stats(api: StatusApi, tag: str, seconds: float) -> Run:
     peaks: list[float] = []
     longest: list[tuple[float, float]] = []  # (max, median) task run time per stage
     uneven: list[tuple[float, float]] = []  # the same, for stages of two or more tasks
+    missing: list[int] = []
     for sid in stage_ids:
         try:
             attempts = api.get(f"/stages/{sid}")
         except httpx.HTTPStatusError:
-            continue  # a stage the scheduler skipped (shuffle reused) may not be listed
+            missing.append(sid)  # e.g. evicted from the status store (spark.ui.retainedStages)
+            continue
         for a in attempts:
             if a["status"] != "COMPLETE":
                 continue
@@ -173,6 +175,11 @@ def _run_stats(api: StatusApi, tag: str, seconds: float) -> Run:
                 longest.append(pair)
                 if a["numTasks"] >= 2 and pair[0] >= UNEVEN_MIN_MS:
                     uneven.append(pair)
+    if missing:
+        raise RuntimeError(
+            f"{tag}: the REST status API returned no data for stages {missing}; the run's "
+            "shuffle, task and memory totals would be undercounted"
+        )
     root = min(e["id"] for e in execs)
     plan = api.get(f"/sql/{root}", details="false", planDescription="true")["planDescription"]
     return Run(
@@ -246,7 +253,7 @@ def final_plan(plan_description: str) -> list[str]:
         if not m:
             continue
         if a and m.group(2) == "Exchange":
-            args[m.group(1)] = re.sub(r"#\d+", "", a.group(1).split(", ENSURE")[0])
+            args[m.group(1)] = re.sub(r"#\d+L?", "", a.group(1).split(", ENSURE")[0])
         elif a and m.group(2) == "Generate":
             args[m.group(1)] = a.group(1).split("(", 1)[0]
         elif loc and m.group(2) == "Scan":
@@ -290,10 +297,16 @@ def key_operators(tree: list[str]) -> str:
 
 
 def bench_session() -> SparkSession:
-    """A local session with the UI (and so the REST status API) on 127.0.0.1, random port."""
-    os.environ.setdefault("SPARK_LOCAL_IP", "127.0.0.1")
+    """A local session with the UI (and so the REST status API) on 127.0.0.1, random port.
+
+    The UI's bind address comes from ``SPARK_LOCAL_IP`` (read when the JVM starts); the driver
+    is bound to loopback too.
+    """
+    os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"
     spark = get_spark(
         "riskagg-bench",
+        spark__driver__bindAddress="127.0.0.1",
+        spark__driver__host="127.0.0.1",
         spark__ui__enabled="true",
         spark__ui__port="0",
         spark__ui__showConsoleProgress="false",

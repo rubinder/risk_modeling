@@ -51,10 +51,10 @@ Columns: median and min-max wall time in seconds; shuffle read and write in MiB;
 
 | Variant | Median s | Min-max s | Shuffle read MiB | Shuffle write MiB | Peak task exec. memory MiB | Longest task s (stage median) | Tasks | Key operators |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| `explode_regroup` | 11.82 | 11.69-14.06 | 288.2 | 288.2 | 544.0 | 9.57 (9.18) | 32 | ObjectHashAggregate ×2, Exchange ×2, HashAggregate ×2, Generate posexplode, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
-| `array_index_sum` | 0.87 | 0.87-0.88 | 98.3 | 98.3 | 48.5 | 0.64 (0.61) | 24 | HashAggregate ×2, Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
+| `explode_regroup` | 12.23 | 11.67-13.58 | 288.2 | 288.2 | 544.0 | 9.86 (9.39) | 32 | ObjectHashAggregate ×2, Exchange ×2, HashAggregate ×2, Generate posexplode, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
+| `array_index_sum` | 0.96 | 0.90-0.97 | 98.3 | 98.3 | 48.5 | 0.64 (0.61) | 24 | HashAggregate ×2, Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
 
-- `array_index_sum` 0.87 s against `explode_regroup` 11.82 s: 13.53× faster.
+- `array_index_sum` 0.96 s against `explode_regroup` 12.23 s: 12.76× faster.
 - The exploded form wrote 12,640,682 shuffle records (288.2 MiB) against 50,037 (98.3 MiB): `Generate posexplode` multiplies the rows by the scenario count before the first aggregate, and the second aggregate (`collect_list`) runs as ObjectHashAggregate because its buffer is not fixed-width.
 
 ## `rollup`: Roll-up of the org hierarchy
@@ -64,10 +64,10 @@ Columns: median and min-max wall time in seconds; shuffle read and write in MiB;
 
 | Variant | Median s | Min-max s | Shuffle read MiB | Shuffle write MiB | Peak task exec. memory MiB | Longest task s (stage median) | Tasks | Key operators |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| `per_level_from_trades` | 4.46 | 4.27-5.07 | 3.5 | 3.5 | 32.3 | 2.11 (1.97) | 61 | Union, HashAggregate ×8, AQEShuffleRead(coalesced) ×4, Exchange ×4, BroadcastHashJoin ×4, Scan parquet pnl_vectors ×4, BroadcastExchange ×3, Scan parquet hierarchy ×3, ReusedExchange |
-| `grain_then_grouping_sets` | 1.69 | 1.62-2.62 | 105.2 | 105.2 | 48.5 | 0.80 (0.79) | 29 | HashAggregate ×4, AQEShuffleRead(coalesced), Exchange ×2, Expand, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
+| `per_level_from_trades` | 5.00 | 4.45-5.02 | 3.5 | 3.5 | 32.3 | 2.37 (2.20) | 61 | Union, HashAggregate ×8, AQEShuffleRead(coalesced) ×4, Exchange ×4, BroadcastHashJoin ×4, Scan parquet pnl_vectors ×4, BroadcastExchange ×3, Scan parquet hierarchy ×3, ReusedExchange |
+| `grain_then_grouping_sets` | 1.85 | 1.82-2.72 | 105.2 | 105.2 | 48.5 | 0.84 (0.82) | 29 | HashAggregate ×4, AQEShuffleRead(coalesced), Exchange ×2, Expand, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
 
-- `grain_then_grouping_sets` 1.69 s against `per_level_from_trades` 4.46 s: 2.64× faster.
+- `grain_then_grouping_sets` 1.85 s against `per_level_from_trades` 5.00 s: 2.70× faster.
 - Per-level reads the trade vectors 4 times and shuffles 3.5 MiB; the engine reads them once and shuffles 105.2 MiB, with 1 `Expand` over the grain rows. The grain is not cached here, so the engine's variant pays for building it.
 
 ## `skew_aggregate`: Key skew in a hash aggregate
@@ -78,12 +78,12 @@ Columns: median and min-max wall time in seconds; shuffle read and write in MiB;
 
 | Variant | Median s | Min-max s | Shuffle read MiB | Shuffle write MiB | Peak task exec. memory MiB | Longest task s (stage median) | Tasks | Key operators |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| `skew_agg_plain` | 0.65 | 0.63-0.76 | 0.3 | 0.3 | 32.3 | 0.49 (0.47) | 17 | HashAggregate ×2, AQEShuffleRead(coalesced), Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
-| `skew_agg_aqe_skew_join` | 0.63 | 0.60-0.64 | 0.3 | 0.3 | 32.3 | 0.50 (0.49) | 17 | HashAggregate ×2, AQEShuffleRead(coalesced), Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
-| `skew_agg_salted` | 1.09 | 0.87-1.92 | 5.3 | 5.3 | 32.5 | 0.69 (0.63) | 21 | HashAggregate ×4, AQEShuffleRead(coalesced) ×2, Exchange ×2, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
+| `skew_agg_plain` | 0.68 | 0.64-0.70 | 0.3 | 0.3 | 32.3 | 0.52 (0.50) | 17 | HashAggregate ×2, AQEShuffleRead(coalesced), Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
+| `skew_agg_aqe_skew_join` | 0.62 | 0.62-0.68 | 0.3 | 0.3 | 32.3 | 0.49 (0.47) | 17 | HashAggregate ×2, AQEShuffleRead(coalesced), Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
+| `skew_agg_salted` | 1.01 | 0.89-1.63 | 5.3 | 5.3 | 32.5 | 0.61 (0.57) | 21 | HashAggregate ×4, AQEShuffleRead(coalesced) ×2, Exchange ×2, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
 
-- `skew_agg_aqe_skew_join` 0.63 s against `skew_agg_plain` 0.65 s: the difference (0.02 s) is within the run-to-run spread (0.13 s), so no difference is measured.
-- `skew_agg_salted` 1.09 s against `skew_agg_plain` 0.65 s: the difference (0.45 s) is within the run-to-run spread (1.04 s), so no difference is measured.
+- `skew_agg_aqe_skew_join` 0.62 s against `skew_agg_plain` 0.68 s: the difference (0.06 s) is within the run-to-run spread (0.06 s), so no difference is measured.
+- `skew_agg_salted` 1.01 s against `skew_agg_plain` 0.68 s: the difference (0.33 s) is within the run-to-run spread (0.73 s), so no difference is measured.
 - The AQE skew settings left the plan unchanged: AQE's skew handling rewrites joins, and this query has no shuffled join.
 - The plain plan aggregates partially before its shuffle (`HashAggregate` ×2 around one `Exchange`), so each map task sends at most one row per desk: 160 shuffle records (0.3 MiB). The oversized desk never reaches the reducer as raw rows. Salting raised that to 2,718 records and added an aggregation pass.
 
@@ -95,15 +95,15 @@ Columns: median and min-max wall time in seconds; shuffle read and write in MiB;
 
 | Variant | Median s | Min-max s | Shuffle read MiB | Shuffle write MiB | Peak task exec. memory MiB | Longest task s (stage median) | Tasks | Key operators |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| `skew_join_plain` | 1.30 | 1.20-1.31 | 358.6 | 358.6 | 210.3 | 0.58 (0.46) | 32 | HashAggregate ×3, SortMergeJoin, Sort ×2, AQEShuffleRead(coalesced) ×3, Exchange ×3, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy ×2 |
-| `skew_join_aqe_skew_join` | 2.00 | 1.81-2.05 | 716.9 | 716.9 | 65.1 | 0.75 (0.70) | 41 | HashAggregate ×3, AQEShuffleRead(coalesced) ×4, Exchange ×4, SortMergeJoin(skew=true), Sort ×2, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy ×2 |
-| `skew_join_salted` | 1.54 | 1.06-1.57 | 360.2 | 360.2 | 113.6 | 0.64 (0.63) | 41 | HashAggregate ×5, AQEShuffleRead(coalesced) ×2, Exchange ×4, SortMergeJoin, Sort ×2, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy ×2, CartesianProduct, Range |
+| `skew_join_plain` | 1.31 | 1.20-1.36 | 358.6 | 358.6 | 210.3 | 0.60 (0.52) | 32 | HashAggregate ×3, SortMergeJoin, Sort ×2, AQEShuffleRead(coalesced) ×3, Exchange ×3, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy ×2 |
+| `skew_join_aqe_skew_join` | 1.72 | 1.72-2.89 | 716.9 | 716.9 | 65.1 | 0.52 (0.41) | 41 | HashAggregate ×3, AQEShuffleRead(coalesced) ×4, Exchange ×4, SortMergeJoin(skew=true), Sort ×2, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy ×2 |
+| `skew_join_salted` | 1.60 | 0.99-1.81 | 360.2 | 360.2 | 113.6 | 0.76 (0.73) | 41 | HashAggregate ×5, AQEShuffleRead(coalesced) ×2, Exchange ×4, SortMergeJoin, Sort ×2, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy ×2, CartesianProduct, Range |
 
-- `skew_join_aqe_skew_join` 2.00 s against `skew_join_plain` 1.30 s: 1.54× slower.
-- `skew_join_salted` 1.54 s against `skew_join_plain` 1.30 s: the difference (0.24 s) is within the run-to-run spread (0.51 s), so no difference is measured.
-- `skew_join_plain`: no skew split in the plan; most uneven stage: longest task 0.58 s against a median task of 0.46 s; shuffle write 358.6 MiB.
-- `skew_join_aqe_skew_join`: the sort-merge join was split for skew (`SortMergeJoin(skew=true)`); most uneven stage: longest task 0.54 s against a median task of 0.42 s; shuffle write 716.9 MiB.
-- `skew_join_salted`: no skew split in the plan; most uneven stage: longest task 0.55 s against a median task of 0.45 s; shuffle write 360.2 MiB.
+- `skew_join_aqe_skew_join` 1.72 s against `skew_join_plain` 1.31 s: the difference (0.41 s) is within the run-to-run spread (1.17 s), so no difference is measured.
+- `skew_join_salted` 1.60 s against `skew_join_plain` 1.31 s: the difference (0.29 s) is within the run-to-run spread (0.82 s), so no difference is measured.
+- `skew_join_plain`: no skew split in the plan; most uneven stage: longest task 0.51 s against a median task of 0.42 s; shuffle write 358.6 MiB.
+- `skew_join_aqe_skew_join`: the sort-merge join was split for skew (`SortMergeJoin(skew=true)`); most uneven stage: longest task 0.52 s against a median task of 0.41 s; shuffle write 716.9 MiB.
+- `skew_join_salted`: no skew split in the plan; most uneven stage: longest task 0.52 s against a median task of 0.46 s; shuffle write 360.2 MiB.
 - The join's shuffle carries whole trade vectors (no partial aggregation can happen before a join), so the oversized desk lands in one reduce partition.
 - Forcing the skew split cost a shuffle: in the plain plan the aggregate sits on the join's output with no `Exchange` between them, because the join already partitions by desk. Splitting the skewed partition breaks that partitioning, so AQE inserted an `Exchange` above `SortMergeJoin(skew=true)`, and the single `HashAggregate` above it has no partial stage below the new shuffle: the joined vectors were shuffled twice (716.9 MiB written against 358.6 MiB).
 
@@ -114,10 +114,10 @@ Columns: median and min-max wall time in seconds; shuffle read and write in MiB;
 
 | Variant | Median s | Min-max s | Shuffle read MiB | Shuffle write MiB | Peak task exec. memory MiB | Longest task s (stage median) | Tasks | Key operators |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| `sort_merge` | 1.49 | 1.48-1.53 | 362.5 | 362.5 | 113.3 | 0.76 (0.67) | 24 | HashAggregate, SortMergeJoin, Sort ×2, Exchange ×2, Scan parquet pnl_vectors, Scan parquet hierarchy |
-| `broadcast` | 0.91 | 0.88-1.65 | 98.3 | 98.3 | 48.5 | 0.67 (0.63) | 24 | HashAggregate ×2, Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
+| `sort_merge` | 1.33 | 1.23-1.43 | 362.5 | 362.5 | 113.3 | 0.62 (0.52) | 24 | HashAggregate, SortMergeJoin, Sort ×2, Exchange ×2, Scan parquet pnl_vectors, Scan parquet hierarchy |
+| `broadcast` | 0.93 | 0.91-1.85 | 98.3 | 98.3 | 48.5 | 0.69 (0.65) | 24 | HashAggregate ×2, Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
 
-- `broadcast` 0.91 s against `sort_merge` 1.49 s: the difference (0.58 s) is within the run-to-run spread (0.76 s), so no difference is measured.
+- `broadcast` 0.93 s against `sort_merge` 1.33 s: the difference (0.41 s) is within the run-to-run spread (0.94 s), so no difference is measured.
 - The sort-merge join shuffled 362.5 MiB (186,685 records), the trade vectors themselves; the broadcast join shuffled 98.3 MiB (50,037 records), only the partially aggregated grain.
 
 ## `shuffle_partitions`: Shuffle-partition sizing
@@ -128,20 +128,20 @@ Columns: median and min-max wall time in seconds; shuffle read and write in MiB;
 
 | Variant | Median s | Min-max s | Shuffle read MiB | Shuffle write MiB | Peak task exec. memory MiB | Longest task s (stage median) | Tasks | Key operators |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| `static_200` | 3.80 | 3.39-3.91 | 98.4 | 98.4 | 48.5 | 0.68 (0.65) | 216 | HashAggregate ×2, Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
-| `sized_to_data` | 0.94 | 0.86-1.05 | 98.3 | 98.3 | 48.5 | 0.68 (0.62) | 24 | HashAggregate ×2, Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
-| `aqe_coalesced_200` | 1.04 | 0.97-1.08 | 98.4 | 98.4 | 48.5 | 0.73 (0.72) | 25 | HashAggregate ×2, AQEShuffleRead(coalesced), Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
+| `static_200` | 3.51 | 3.49-3.62 | 98.4 | 98.4 | 48.5 | 0.70 (0.69) | 216 | HashAggregate ×2, Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
+| `sized_to_data` | 0.92 | 0.90-0.97 | 98.3 | 98.3 | 48.5 | 0.69 (0.66) | 24 | HashAggregate ×2, Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
+| `aqe_coalesced_200` | 0.98 | 0.96-1.09 | 98.4 | 98.4 | 48.5 | 0.70 (0.69) | 25 | HashAggregate ×2, AQEShuffleRead(coalesced), Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy |
 
-- `sized_to_data` 0.94 s against `static_200` 3.80 s: 4.03× faster.
-- `aqe_coalesced_200` 1.04 s against `static_200` 3.80 s: 3.67× faster.
+- `sized_to_data` 0.92 s against `static_200` 3.51 s: 3.80× faster.
+- `aqe_coalesced_200` 0.98 s against `static_200` 3.51 s: 3.57× faster.
 - `static_200`: 216 tasks, shuffle read 98.4 MiB, operators HashAggregate ×2, Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy.
 - `sized_to_data`: 24 tasks, shuffle read 98.3 MiB, operators HashAggregate ×2, Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy.
 - `aqe_coalesced_200`: 25 tasks, shuffle read 98.4 MiB, operators HashAggregate ×2, AQEShuffleRead(coalesced), Exchange, BroadcastHashJoin, Scan parquet pnl_vectors, BroadcastExchange, Scan parquet hierarchy.
 
 ## Noise controls
 
-- `array_index_sum`, `broadcast`, `sized_to_data` ran the same query to the same executed plan: medians 0.87, 0.91, 0.94 s, 0.07 s apart. A difference of that size between other variants is not evidence of a difference either.
-- `skew_agg_plain`, `skew_agg_aqe_skew_join` ran the same query to the same executed plan: medians 0.65, 0.63 s, 0.02 s apart. A difference of that size between other variants is not evidence of a difference either.
+- `array_index_sum`, `broadcast`, `sized_to_data` ran the same query to the same executed plan: medians 0.96, 0.93, 0.92 s, 0.04 s apart. A difference of that size between other variants is not evidence of a difference either.
+- `skew_agg_plain`, `skew_agg_aqe_skew_join` ran the same query to the same executed plan: medians 0.68, 0.62 s, 0.06 s apart. A difference of that size between other variants is not evidence of a difference either.
 
 ## Executed plans
 
@@ -262,7 +262,7 @@ ResultQueryStage
 +- HashAggregate
    +- AQEShuffleRead, coalesced
       +- ShuffleQueryStage
-         +- Exchange hashpartitioning(firm_id, business_line_id, desk_id, book_id, window, spark_grouping_idL, 8)
+         +- Exchange hashpartitioning(firm_id, business_line_id, desk_id, book_id, window, spark_grouping_id, 8)
             +- HashAggregate
                +- * Expand
                   +- HashAggregate
@@ -335,7 +335,7 @@ ResultQueryStage
                +- HashAggregate
                   +- AQEShuffleRead, coalesced
                      +- ShuffleQueryStage
-                        +- Exchange hashpartitioning(desk_id, _groupingexpressionL, 8)
+                        +- Exchange hashpartitioning(desk_id, _groupingexpression, 8)
                            +- HashAggregate
                               +- * Project
                                  +- * BroadcastHashJoin Inner BuildRight
@@ -436,7 +436,7 @@ ResultQueryStage
                      +- * SortMergeJoin Inner
                         :- * Sort
                         :  +- ShuffleQueryStage
-                        :     +- Exchange hashpartitioning(desk_id, saltL, 8)
+                        :     +- Exchange hashpartitioning(desk_id, salt, 8)
                         :        +- * Project
                         :           +- * BroadcastHashJoin Inner BuildRight
                         :              :- * Filter
@@ -449,7 +449,7 @@ ResultQueryStage
                         :                          +- Scan parquet hierarchy
                         +- * Sort
                            +- ShuffleQueryStage
-                              +- Exchange hashpartitioning(desk_id, saltL, 8)
+                              +- Exchange hashpartitioning(desk_id, salt, 8)
                                  +- CartesianProduct Inner
                                     :- * HashAggregate
                                     :  +- AQEShuffleRead, coalesced
