@@ -16,7 +16,8 @@ Formulas, per quarter q = 1..9 (``u`` unemployment in percentage points, ``g`` G
 - ``ppnr = ead x (revenue_rate_q x (1 + gdp_beta x g_q) - expense_rate_q)``
 - ``trading_loss`` = the global-market-shock loss in quarter 1 of SEVERELY_ADVERSE, else 0
 - ``net_income = (ppnr - credit_loss - trading_loss) x (1 - tax_rate)``
-- ``cet1_q = cet1_{q-1} + net_income_q`` (no common dividends: 12 CFR 252.44(c)(1))
+- ``cet1_q = cet1_{q-1} + net_income_q`` (no common dividends: 12 CFR 252.44(c)(1); the
+  rule does deduct stated AT1/T2 payments, 252.44(c)(2), but there are none here)
 - ``rwa = sum(ead x risk_weight) + rwa_trading``, constant; ``cet1_ratio = cet1 / rwa``
 - ``scb = max(floor, ratio_0 - min_q ratio_q(SEVERELY_ADVERSE)
   + sum(planned dividends, dividend quarters) / rwa(trough quarter))``
@@ -170,6 +171,9 @@ def _null_capital(df: DataFrame) -> DataFrame:
 
 # SIMPLIFICATION: constant balance sheet - exposures, risk weights and RWA stay at their
 # starting values for all nine quarters (no growth, run-off, or migration of risk weights).
+# SIMPLIFICATION: no preferred stock or other additional tier 1 / tier 2 instruments, so no
+# stated dividends or interest are deducted from CET1 (the supervisory path deducts them,
+# 12 CFR 252.44(c)(2)).
 # SIMPLIFICATION: no counterparty default component (the largest-counterparty-default loss of
 # the supervisory test) and no operational-risk losses or other trading-book effects beyond
 # the one global market shock.

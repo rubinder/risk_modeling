@@ -43,7 +43,10 @@ name used here.
 
 **Who it applies to.** Bank holding companies, savings and loan holding companies and US
 intermediate holding companies of foreign banks with $100 billion or more in assets
-[Fed-ST, footnote 1; 12 CFR 252.43(a); 12 CFR 225.8(b)(1)(i)].
+[Fed-ST, footnote 1]. For bank holding companies and US intermediate holding companies the
+stress test rule is 12 CFR part 252, subpart E (scope in 252.43(a)) and the capital plan rule is
+12 CFR 225.8 (scope in 225.8(b)(1)); for savings and loan holding companies they are 12 CFR
+part 238, subparts O and S [Fed-ST, footnote 1].
 
 - The largest (global systemically important banks and Category II and III firms) are tested
   every year.
@@ -168,8 +171,14 @@ any instruments that qualify as common equity tier 1 capital" [12 CFR 252.44(c)(
 model documentation adds that "four quarters of common dividends are included in the calculation
 of each firm's stress capital buffer separately" [Fed-AGG, Retained Earnings Model].
 
-The Board also assumes no new common or preferred shares, no buybacks, and a balance sheet and
-RWA held constant over the horizon [12 CFR 252.44(c)(3)-(4); Fed-AGG, Balances Model]. So, here:
+The Board also assumes no redemption or repurchase of any regulatory capital instrument and no
+issuance of common or preferred stock [12 CFR 252.44(c)(3)-(4)], and a balance sheet and RWA
+held constant over the horizon [Fed-AGG, Balances Model]. It does **not** assume preferred
+dividends stop: the company "will make payments on instruments that qualify as additional tier 1
+capital or tier 2 capital equal to the stated dividend, interest, or principal due on such
+instrument" [12 CFR 252.44(c)(2)], and those preferred dividends are deducted each quarter
+[Fed-AGG, Equation C1]. This project has no preferred stock, so it deducts nothing (a
+simplification, section 4). So, here:
 
 ```
 cet1_q       = cet1_{q-1} + net_income_q            (cet1_0 = cet1_start)
@@ -448,14 +457,18 @@ Marked `SIMPLIFICATION:` in the code:
   effects beyond the one global market shock (`project`). The largest counterparty default
   loss, credit valuation adjustment losses and incremental default losses on trading positions
   are explained in section 1.4 but not built.
+- **No preferred stock or other additional tier 1 / tier 2 instruments** (`project`). The
+  supervisory path deducts their stated dividends and interest every quarter
+  [12 CFR 252.44(c)(2); Fed-AGG, Equation C1]; here there are none, so CET1 moves by net
+  income alone.
 - **The stress capital buffer is computed for legal entities as well as the firm**, and from one
   stress test cycle (`summary`). The rule sets it only for the holding company, and from 2029
   averages the decline over two cycles.
 
 Also different from a bank, by the project's scope:
 
-- **No capital actions other than planned common dividends**: no preferred dividends, buybacks or
-  issuance. The supervisory path assumes none of these anyway [12 CFR 252.44(c)].
+- **No capital actions other than planned common dividends.** No buybacks or issuance, which
+  the supervisory path assumes away anyway [12 CFR 252.44(c)(3)-(4)].
 - **Dividends are a constant quarterly amount per legal entity**, so the choice between quarters
   4-7 and 5-8 changes no number here.
 - **The firm's CET1 is the sum of the legal entities'**, with no consolidation adjustments.
@@ -474,7 +487,8 @@ Also different from a bank, by the project's scope:
    Code: `src/riskagg/measures/ccar.py`.
 2. **Who has to do it, and how often?** US BHCs, SLHCs and IHCs with $100 billion or more in
    assets. The largest are tested annually; Category IV firms in even years
-   [12 CFR 252.43, 252.44(d)].
+   [Fed-ST, footnote 1; 12 CFR 252.43, 252.44(d) for BHCs and IHCs; 12 CFR part 238,
+   subpart O for SLHCs].
 3. **What are the scenarios, and over what horizon?** At least a baseline and a severely
    adverse scenario, over a planning horizon of at least nine quarters [12 CFR 252.42,
    252.44(b)]. Code: `make_macro_scenarios`, and `test_baseline_has_no_trading_loss`.

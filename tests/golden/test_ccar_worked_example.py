@@ -8,6 +8,7 @@ printed rounded to whole dollars, ratios as percentages to four decimals.
 """
 
 import datetime
+import itertools
 
 import pytest
 from pyspark.sql import functions as F
@@ -29,6 +30,11 @@ SEGMENT = "LE02|BL02|CORPORATE"
 SEG_INPUTS = {"ead": 27692533, "pd_base": "0.0203", "lgd": "0.3763",
               "revenue_rate_q": "0.00656", "expense_rate_q": "0.00307"}  # fmt: skip
 UNEMPLOYMENT_RISE = "1.5"  # 5.5% - 4.0%
+SEG_EAD_STORED = "27,692,533.33"
+# Severely adverse quarter 0 and quarter 1: unemployment (%), annualised GDP growth (%).
+MACRO_Q0_Q1 = ("4.0%", "5.5%", "−6%")
+LE02_DIVIDEND_Q = "125,167.33"
+LE02_BASELINE_LOW_QUARTER = 1
 SEG_PD_Q = "0.007739375"  # 0.0203 / 4 x (1 + 0.35 x 1.5)
 SEG_REVENUE_Q = "0.0057728"  # 0.00656 x (1 + 2.0 x -0.06)
 SEG_CREDIT_LOSS, SEG_PPNR = 80650, 74847
@@ -111,11 +117,16 @@ def test_one_segment_first_quarter(spark, tiny):
     seg = inputs.banking_book.where(F.col("segment_id") == SEGMENT)
     r = seg.first()
     assert _money(r.ead) == _money(SEG_INPUTS["ead"])
+    assert f"{r.ead:,.2f}" == SEG_EAD_STORED
     for k in ("pd_base", "lgd", "revenue_rate_q", "expense_rate_q"):
         assert str(r[k]) == SEG_INPUTS[k]
     macro = {(m.scenario, m.quarter): m for m in inputs.macro_scenarios.collect()}
     rise = macro[(SA, 1)].unemployment_rate - macro[(SA, 0)].unemployment_rate
     assert f"{rise:.1f}" == UNEMPLOYMENT_RISE
+    u0, u1, g1 = MACRO_Q0_Q1
+    assert f"{macro[(SA, 0)].unemployment_rate:.1f}%" == u0
+    assert f"{macro[(SA, 1)].unemployment_rate:.1f}%" == u1
+    assert f"{macro[(SA, 1)].gdp_growth:.0%}".replace("-", "−") == g1
     pd_q = r.pd_base / 4 * (1 + 0.35 * rise)
     assert f"{pd_q:.9f}" == SEG_PD_Q
     assert f"{r.revenue_rate_q * (1 + 2.0 * macro[(SA, 1)].gdp_growth):.7f}" == SEG_REVENUE_Q
@@ -146,7 +157,12 @@ def test_le02_first_quarter_and_path(tiny):
         assert (_money(r.net_income), _money(r.cet1), _pct(r.cet1_ratio)) == (
             _money(ni), _money(cet1), ratio
         )  # fmt: skip
-        assert r.dividends == pytest.approx(125167.33)  # planned, not deducted
+        assert f"{r.dividends:,.2f}" == LE02_DIVIDEND_Q  # planned, not deducted
+    # Under BASELINE, LE02's ratio only rises, so its low is quarter 1.
+    base = [rows[(BASE, q, "LE02")].cet1_ratio for q in range(1, 10)]
+    assert all(b > a for a, b in itertools.pairwise(base))
+    assert 1 + base.index(min(base)) == LE02_BASELINE_LOW_QUARTER
+    assert _pct(base[0]) == BASELINE_MIN["LE02"]
 
 
 def test_losses_by_cut_reconcile(tiny):
@@ -198,6 +214,7 @@ def test_study_page_prints_these_numbers():
     for value in money:
         assert _money(abs(value)) in text, value
     literals = [
+        SEG_EAD_STORED, *MACRO_Q0_Q1, LE02_DIVIDEND_Q,
         *(v for k, v in SEG_INPUTS.items() if k != "ead"), UNEMPLOYMENT_RISE, SEG_PD_Q,
         SEG_REVENUE_Q, LE02_RATIO_Q1, *(r for *_, r in LE02_PATH.values()),
         *(x for t in SCB.values() for x in t), *BASELINE_MIN.values(), RWA_WEIGHTED_SCB,
