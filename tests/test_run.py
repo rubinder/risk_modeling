@@ -105,15 +105,22 @@ def test_checksum_is_order_independent_and_content_sensitive(spark):
 
 def test_second_run_is_official_and_both_directories_remain(spark, generated, tmp_path):
     root = _fresh_root(generated, tmp_path)
-    assert _invoke("run", root).exit_code == 0
-    assert _invoke("run", root).exit_code == 0
+    ids = []
+    for _ in range(2):
+        result = _invoke("run", root)
+        assert result.exit_code == 0
+        ids.append(re.search(r"run (\S+) is official for", result.output).group(1))
+        if len(ids) == 1:
+            assert official_run(root, datetime.date(2026, 11, 12)) == ids[0]
+    first, second = ids
+    assert first != second
     for table in ("risk_metrics", "pnl_scenarios"):
-        assert len(_run_dirs(root, table)) == 2
-    first, second = (d.split("=", 1)[1] for d in _run_dirs(root))
+        assert _run_dirs(root, table) == sorted(f"run_id={i}" for i in ids)
     assert (root / "runs" / first / "manifest.json").exists()
     assert (root / "runs" / second / "manifest.json").exists()
     official = official_run(root, datetime.date(2026, 11, 12))
-    assert official in (first, second)
+    assert official == second
+    assert official != first
 
     metrics = spark.read.parquet(str(root / "curated/risk_metrics"))
     both = metrics.select("run_id").distinct().count()
