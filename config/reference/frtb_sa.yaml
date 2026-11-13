@@ -1,0 +1,85 @@
+# FRTB standardised approach, sensitivities-based method: risk weights and correlations.
+# Source: Basel Framework MAR21 (version effective 1 January 2023, incorporating the FAQs of
+# 5 July 2024), checked against the BIS text. Paragraph numbers are given beside each group.
+# Risk weights are decimals (1.7% -> 0.017; 30% -> 0.30). Only the risk classes the platform
+# models are carried: GIRR, equity (EQ) and FX.
+
+# MAR21.86: an FX bucket is each currency against the reporting currency.
+# MAR21.44 footnote 12: the bank's domestic reporting currency is itself a specified currency.
+reporting_currency: USD
+
+# MAR21.6: three correlation scenarios applied to rho (within bucket) and gamma (across
+# buckets) of every risk class, for delta, vega and curvature.
+#   medium: the prescribed values;
+#   high:   min(multiplier * x, cap)                       (MAR21.6(2))
+#   low:    max(slope * x + intercept, floor_multiplier * x) = max(2x - 100%, 75% x) (MAR21.6(3))
+# MAR21.100-21.101: for curvature the scenarios apply to the squared delta correlations.
+correlation_scenarios:
+  high: {multiplier: 1.25, cap: 1.0}
+  low: {slope: 2.0, intercept: -1.0, floor_multiplier: 0.75}
+
+GIRR:
+  delta:
+    # MAR21.42 Table 1, by tenor in years (MAR21.8(1) prescribed tenor list).
+    risk_weights:
+      0.25: 0.017
+      0.5: 0.017
+      1: 0.016
+      2: 0.013
+      3: 0.012
+      5: 0.011
+      10: 0.011
+      15: 0.011
+      20: 0.011
+      30: 0.011
+    # MAR21.44 and footnote 12: risk weights may be divided by sqrt(2) for these currencies
+    # (plus the reporting currency). Applied here, as the bank's discretion allows.
+    specified_currencies: [EUR, USD, GBP, AUD, JPY, SEK, CAD]
+    # MAR21.46 footnote 13: rho = max(exp(-theta * |Tk - Tl| / min(Tk, Tl)), 40%), theta 3%.
+    tenor_correlation: {theta: 0.03, floor: 0.40}
+    # MAR21.50: across currencies.
+    gamma: 0.50
+  vega:
+    # MAR21.92 Table 13: GIRR liquidity horizon 60, risk weight 100%.
+    risk_weight: 1.0
+
+EQ:
+  delta:
+    # MAR21.77 Table 10 (equity spot price) and MAR21.78(2) (spot-spot, different issuers).
+    # SIMPLIFICATION: only buckets 1, 5, 8 and 12 are carried; bucket 11 (other sector,
+    # simple sum of absolute values, MAR21.79) is not supported.
+    buckets:
+      "1": {risk_weight: 0.55, rho: 0.15}
+      "5": {risk_weight: 0.30, rho: 0.25}
+      "8": {risk_weight: 0.50, rho: 0.25}
+      "12": {risk_weight: 0.15, rho: 0.80}
+    # MAR21.80: across buckets.
+    gamma:
+      buckets_1_to_10: 0.15
+      with_bucket_11: 0.0
+      between_12_and_13: 0.75
+      otherwise: 0.45
+  vega:
+    # MAR21.92 Table 13 and its FAQ1: large market cap (buckets 1-8) and indices (12-13)
+    # have liquidity horizon 20 and risk weight 77.78% (= 55% x sqrt(20/10), footnote 24).
+    risk_weights:
+      "1": 0.7778
+      "5": 0.7778
+      "8": 0.7778
+      "12": 0.7778
+
+FX:
+  delta:
+    # MAR21.87: one relative risk weight for every FX sensitivity.
+    risk_weight: 0.15
+    # MAR21.88 and footnote 22: specified currency pairs whose risk weight may be divided by
+    # sqrt(2). Applied here, as the bank's discretion allows. (First-order crosses also
+    # qualify; every bucket here is quoted against USD, so none arises.)
+    specified_pairs: [USD/EUR, USD/JPY, USD/GBP, USD/AUD, USD/CAD, USD/CHF, USD/MXN, USD/CNY,
+                      USD/NZD, USD/RUB, USD/HKD, USD/SGD, USD/TRY, USD/KRW, USD/SEK, USD/ZAR,
+                      USD/INR, USD/NOK, USD/BRL]
+    # MAR21.89: across buckets.
+    gamma: 0.60
+  vega:
+    # MAR21.92 Table 13: FX liquidity horizon 40, risk weight 100%.
+    risk_weight: 1.0
