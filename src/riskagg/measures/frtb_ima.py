@@ -33,7 +33,14 @@ from pyspark.sql import functions as F
 from riskagg.conventions import es_col
 from riskagg.engine.inputs import RunInputs
 from riskagg.engine.spec import AggregationSpec
-from riskagg.engine.vectors import GRAIN_DIMS, METRIC_COLUMNS, ROLLED_UP, node_level, sum_vectors
+from riskagg.engine.vectors import (
+    GRAIN_DIMS,
+    METRIC_COLUMNS,
+    ROLLED_UP,
+    node_level,
+    sum_vectors,
+    unique_sets,
+)
 from riskagg.semantic.model import SemanticModel, SpecError
 
 LEVEL = 0.975  # MAR33.3
@@ -233,7 +240,7 @@ def _ima_rows(
     if spec.filters:
         raise SpecError(f"spec '{spec.name}': FRTB measures do not support filters")
     frames = []
-    for gs in dict.fromkeys(tuple(g) for g in spec.grouping_sets):
+    for gs in unique_sets(spec.grouping_sets):
         level = inputs.ima_level(list(gs))
         rolled = {d: F.lit(ROLLED_UP) for d in GRAIN_DIMS if d not in gs}
         frames.append(
