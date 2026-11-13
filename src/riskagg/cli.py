@@ -74,11 +74,15 @@ def _as_of(value: str | None) -> datetime.date:
 
 
 def _session() -> tuple[SparkSession, bool]:
-    """The active session if there is one (and then it is not ours to stop), else a new one."""
-    existing = SparkSession.getActiveSession() is not None
+    """The active session as it is, if there is one (not ours to stop or reconfigure), else a
+    new one with ``SESSION_CONF``. ``get_spark`` on an active session would set its options on
+    that session (``getOrCreate`` applies them), changing it for its owner."""
+    active = SparkSession.getActiveSession()
+    if active is not None:
+        return active, False
     spark = get_spark()
     spark.sparkContext.setLogLevel("ERROR")
-    return spark, not existing
+    return spark, True
 
 
 def reference_paths() -> list[Path]:

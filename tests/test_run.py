@@ -121,7 +121,7 @@ def test_second_run_is_official_and_both_directories_remain(spark, generated, tm
     ids = []
     for _ in range(2):
         result = _invoke("run", root)
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
         ids.append(re.search(r"run (\S+) is official for", result.output).group(1))
         if len(ids) == 1:
             assert official_run(root, datetime.date(2026, 11, 12)) == ids[0]
@@ -149,7 +149,8 @@ def test_second_run_is_official_and_both_directories_remain(spark, generated, tm
 
 def test_pnl_scenarios_shape(spark, generated, tmp_path):
     root = _fresh_root(generated, tmp_path)
-    assert _invoke("run", root).exit_code == 0
+    result = _invoke("run", root)
+    assert result.exit_code == 0, result.output
     df = spark.read.parquet(str(root / "curated/pnl_scenarios"))
     assert dict(df.dtypes)["scenario_idx"] == "int"
     stats = df.agg(F.min("scenario_idx"), F.max("scenario_idx")).first()
@@ -164,11 +165,20 @@ def _corrupt_one_value(root, table="pnl_scenarios"):
 
 
 def _corrupt_leaf(leaf):
-    """Alter one pnl value in the first Parquet file of ``leaf``."""
-    path = min(leaf.glob("part-*.parquet"))
+    """+1000 on the pnl of one row of ``leaf``, chosen deterministically: the smallest
+    ``GRAIN_KEY`` over all its Parquet files. Only that row's file is rewritten."""
+    best = None
+    for path in sorted(leaf.glob("part-*.parquet")):
+        t = pq.read_table(path, columns=GRAIN_KEY).to_pylist()
+        for i, row in enumerate(t):
+            key = tuple(row[k] for k in GRAIN_KEY)
+            if best is None or key < best[0]:
+                best = (key, path, i)
+    assert best is not None, f"no rows under {leaf}"
+    _, path, i = best
     t = pq.read_table(path)
     pnl = t.column("pnl").to_pylist()
-    pnl[0] += 1000.0
+    pnl[i] += 1000.0
     pq.write_table(t.set_column(t.schema.get_field_index("pnl"), "pnl", [pnl]), path)
     path.with_name(f".{path.name}.crc").unlink(missing_ok=True)  # Hadoop rejects a stale checksum
 
@@ -330,7 +340,8 @@ def test_run_exits_nonzero_and_keeps_official_when_reconcile_fails(
     spark, generated, tmp_path, monkeypatch
 ):
     root = _fresh_root(generated, tmp_path)
-    assert _invoke("run", root).exit_code == 0
+    result = _invoke("run", root)
+    assert result.exit_code == 0, result.output
     official_file = root / "runs" / "official.json"
     before = official_file.read_text()
 
@@ -342,8 +353,8 @@ def test_run_exits_nonzero_and_keeps_official_when_reconcile_fails(
 
     monkeypatch.setattr(curate, "write_pnl_scenarios", corrupting_write)
     result = _invoke("run", root)
-    assert result.exit_code != 0
-    assert "FAIL" in result.output
+    assert result.exit_code != 0, result.output
+    assert "[FAIL] pnl_scenarios_equal_raw_per_grain_cell" in result.output, result.output
     assert official_file.read_text() == before
     assert len(_run_dirs(root)) == 2
     failed_id = next(d.split("=", 1)[1] for d in _run_dirs(root) if d.split("=", 1)[1]
@@ -360,8 +371,23 @@ def test_failing_registered_check_blocks_official(generated, tmp_path, monkeypat
 
     monkeypatch.setattr(audit, "CHECKS", [*audit.CHECKS, failing])
     result = _invoke("run", root)
-    assert result.exit_code != 0
+    assert result.exit_code != 0, result.output
+    assert "[FAIL] always_fails: injected" in result.output, result.output
     assert official_run(root, datetime.date(2026, 11, 12)) is None
+
+
+def test_cli_leaves_an_active_sessions_conf_alone(spark, generated, tmp_path):
+    """The CLI uses an active session as it is: its own settings would otherwise leak into the
+    test session (shuffle partitions 4 -> 8, ...) for every later test."""
+    from riskagg.spark import SESSION_CONF
+
+    keys = [k for k in SESSION_CONF if not k.startswith("spark.driver.")]
+    before = {k: spark.conf.get(k, None) for k in keys}
+    assert before["spark.sql.shuffle.partitions"] == "4"
+    result = _invoke("run", _fresh_root(generated, tmp_path))
+    assert result.exit_code == 0, result.output
+    assert {k: spark.conf.get(k, None) for k in keys} == before
+    assert not spark.sparkContext._jsc.sc().isStopped()
 
 
 def test_spec_hash_depends_on_reference_files(tmp_path):
