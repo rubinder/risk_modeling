@@ -16,9 +16,12 @@ from riskagg.bench.variants import Inputs, variants
 from riskagg.data.market import make_exposures, make_pnl_vectors
 from riskagg.data.org import make_hierarchy, make_risk_factors, make_trades
 from riskagg.data.profiles import PROFILES
+from riskagg.paths import REPO_ROOT
 
 PROFILE = dataclasses.replace(PROFILES["bench"], n_trades=5_000, n_scenarios=50)
 AS_OF = datetime.date(2026, 11, 12)
+STUDY_PAGE = REPO_ROOT / "docs/study/05-aggregation-engineering.md"
+REPORT = REPO_ROOT / "docs/benchmarks/report.md"
 
 
 @pytest.fixture(scope="module")
@@ -104,3 +107,16 @@ def test_report_has_a_measured_row_per_variant(spark, tmp_path):
     assert "Apple" in text or "CPU" in text
     assert f"{PROFILE.n_trades:,}" in text
 
+
+_NUMBER = re.compile(r"(?<![\w.])\d+(?:,\d{3})*(?:\.\d+)?(?![\w])")
+
+
+def test_study_page_quotes_only_numbers_from_the_report():
+    """Every number in the page's benchmark section appears in the generated report."""
+    page = STUDY_PAGE.read_text()
+    report = REPORT.read_text()
+    section = page.split("## 6. What the benchmark measured", 1)[1].split("\n## ", 1)[0]
+    quoted = set(_NUMBER.findall(section))
+    assert quoted, "the benchmark section quotes no numbers"
+    report_numbers = set(_NUMBER.findall(report))
+    assert quoted <= report_numbers, sorted(quoted - report_numbers)
