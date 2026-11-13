@@ -4,9 +4,11 @@ services:
   pinot:
     image: apachepinot/pinot:1.6.0
     command: QuickStart -type EMPTY
+    # Loopback only: the quick-start controller and broker have no authentication, so anyone
+    # who can reach these ports can read, load or drop tables.
     ports:
-      - "9000:9000" # controller (REST API, query console)
-      - "8000:8000" # broker (SQL endpoint /query/sql)
+      - "127.0.0.1:9000:9000" # controller (REST API, query console)
+      - "127.0.0.1:8000:8000" # broker (SQL endpoint /query/sql)
     environment:
       JAVA_OPTS: "-Xms1G -Xmx4G -XX:+UseG1GC"
     healthcheck:

@@ -19,7 +19,6 @@ from riskagg.semantic.model import Measure, SemanticModel, SpecError
 
 Kind = Literal["additive", "vector_scenarios", "lookup"]
 
-VECTOR_TABLE = "pnl_scenarios"  # per-scenario P&L sums, at the grain
 ROW_COUNT = "row_count"  # companion column that tells an empty total from a real one
 MAX_ROWS = 10_000_000  # Pinot truncates to 10 rows unless a LIMIT is given
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -174,7 +173,7 @@ def build_query(
             f"(available: {list(model.grain)})",
         )
         fixed = {**pinned, "window": [m.params["window"]], **user}
-        return Query(VECTOR_TABLE, group_by, ("SUM", "pnl"), fixed, "vector_scenarios", m)
+        return Query(model.vector_table, group_by, ("SUM", "pnl"), fixed, "vector_scenarios", m)
 
     # structured: only ever looked up at a level the spec precomputed
     wanted = frozenset(group_by)

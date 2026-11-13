@@ -9,6 +9,7 @@ import yaml
 from riskagg.paths import semantic_model_path
 
 MEASURE_CLASSES = ("additive", "vector", "structured")
+DEFAULT_VECTOR_TABLE = "pnl_scenarios"
 
 
 class SpecError(ValueError):
@@ -36,6 +37,8 @@ class SemanticModel:
     grain: tuple[str, ...]
     measures: dict[str, Measure]
     tables: dict[str, dict[str, Any]]
+    # The table of per-scenario P&L at the grain that vector measures are answered from.
+    vector_table: str = DEFAULT_VECTOR_TABLE
 
     def measure(self, name: str) -> Measure:
         try:
@@ -87,4 +90,7 @@ def load_model(path: str | Path | None = None) -> SemanticModel:
             dimensions=dims,
             computed_at=computed_at,
         )
-    return SemanticModel(dimensions, hierarchies, grain, measures, tables)
+    vector_table = raw.get("vector_table", DEFAULT_VECTOR_TABLE)
+    if any(m.measure_class == "vector" for m in measures.values()) and vector_table not in tables:
+        raise SpecError(f"vector_table '{vector_table}' is not one of the tables {sorted(tables)}")
+    return SemanticModel(dimensions, hierarchies, grain, measures, tables, vector_table)

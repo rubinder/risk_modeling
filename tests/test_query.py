@@ -440,3 +440,17 @@ def test_pandas_executor_drilldown(tmp_run):
     assert len(rows) == 30 and list(rows.columns) == list(d.columns)
     assert set(rows.desk_id) == {"DESK002"} and set(rows.window) == {"STRESSED"}
     assert set(rows.run_id) == {tmp_run.run_id}
+
+
+def test_vector_table_comes_from_the_model(model, tmp_path):
+    from reference.models import prefixed
+
+    assert model.vector_table == "pnl_scenarios"
+    q = build_query(prefixed(model, "t_"), "var_99_1d", ["desk_id"], {}, D, R)
+    assert q.table == "t_pnl_scenarios" and 'FROM "t_pnl_scenarios"' in q.to_pinot_sql()
+    raw = yaml.safe_load(load_model_text())
+    raw["vector_table"] = "nope"
+    path = tmp_path / "model.yaml"
+    path.write_text(yaml.safe_dump(raw))
+    with pytest.raises(SpecError, match="vector_table 'nope'"):
+        load_model(path)

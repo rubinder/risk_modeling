@@ -5,7 +5,8 @@ Shared by the HTTP API and the in-process ``RiskClient``, so both pick the same 
 * the as-of date defaults to the latest one with an official run; the run is always that
   date's official run (``runs/official.json``);
 * Pinot answers when its controller is up and the broker serves exactly that run for the
-  date in the table the request reads; otherwise the curated Parquet files answer;
+  date in the table the request reads, with as many rows as the run's Parquet partition;
+  otherwise the curated Parquet files answer;
 * a Pinot failure mid-request (error, incomplete result, connection) falls back to Parquet.
 """
 
@@ -17,6 +18,7 @@ from pathlib import Path
 
 import httpx
 import pandas as pd
+import pyarrow.dataset as ds
 
 from riskagg.context import DEFAULT_ROOT, official_runs
 from riskagg.semantic.model import SemanticModel, load_model
@@ -139,8 +141,21 @@ class RiskService:
         rows, source = self._run(drill, date, run_id)
         return Answer(rows, date, run_id, source)
 
+    def run_rows(self, table: str, as_of_date: datetime.date, run_id: str) -> int:
+        """Rows in the run's curated Parquet partition of ``table`` (0 when there is none)."""
+        path = (
+            self.root / "curated" / table / f"as_of_date={as_of_date.isoformat()}"
+            / f"run_id={run_id}"
+        )  # fmt: skip
+        return ds.dataset(path, format="parquet").count_rows() if path.is_dir() else 0
+
     def pinot_serves(self, table: str, as_of_date: datetime.date, run_id: str) -> bool:
-        """Pinot is up and holds exactly ``run_id`` for the date in ``table``."""
+        """Pinot is up and holds, for the date in ``table``, exactly ``run_id``'s rows.
+
+        The row count matters: during a load, or after a failed one, Pinot can hold only this
+        run but not all of it. VaR over a subset of the grain rows still has every scenario
+        per group, so nothing downstream would notice the smaller sums.
+        """
         if not pinot.is_up(self.controller_url):
             return False
         try:
@@ -150,7 +165,15 @@ class RiskService:
         except (httpx.HTTPError, pinot.PinotLoadError) as e:
             log.warning("Pinot broker at %s is not answering (%s)", self.broker_url, e)
             return False
-        return set(loaded) == {run_id}
+        expected = self.run_rows(table, as_of_date, run_id)
+        if expected and loaded == {run_id: expected}:
+            return True
+        if set(loaded) == {run_id}:
+            log.warning(
+                "Pinot holds %s of %s rows of %s for %s run %s (load incomplete)",
+                loaded[run_id], expected, table, as_of_date, run_id,
+            )  # fmt: skip
+        return False
 
     def _run(
         self, request: Query | Drilldown, date: datetime.date, run_id: str

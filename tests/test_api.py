@@ -14,6 +14,7 @@ from riskagg.semantic.query import QueryError, SliceNotAvailable
 from riskagg.serving import service as service_mod
 from riskagg.serving.api import create_app
 from riskagg.serving.client import RiskClient
+from riskagg.serving.executors import PandasExecutor
 from riskagg.serving.service import NotFound, resolve_run
 
 DOWN = "http://127.0.0.1:9"  # nothing listens on the discard port
@@ -162,20 +163,27 @@ def test_resolve_run_defaults_to_latest_official(tmp_run, tmp_path):
     assert resolve_run(tmp_path, tmp_run.as_of_date.isoformat()) == (tmp_run.as_of_date, "older")
 
 
-def test_pinot_not_used_when_it_holds_another_run(tmp_run, monkeypatch):
+def test_pinot_used_only_when_it_holds_exactly_the_official_run(tmp_run, monkeypatch):
+    """Same run and the same row count as the run's Parquet partition, else Parquet."""
     svc = service_mod.RiskService(tmp_run.root, broker_url=DOWN, controller_url=DOWN)
+    full = len(PandasExecutor(tmp_run.root)._dataset("pnl_scenarios").to_table().to_pandas())
+    run, date = tmp_run.run_id, tmp_run.as_of_date
+
+    def serving(loaded):
+        monkeypatch.setattr(service_mod.pinot, "loaded_runs", lambda *a, **k: loaded)
+        return svc.pinot_serves("pnl_scenarios", date, run)
+
     monkeypatch.setattr(service_mod.pinot, "is_up", lambda url: True)
-    monkeypatch.setattr(service_mod.pinot, "loaded_runs", lambda *a, **k: {"other-run": 10})
-    assert not svc.pinot_serves("pnl_scenarios", tmp_run.as_of_date, tmp_run.run_id)
-    monkeypatch.setattr(
-        service_mod.pinot, "loaded_runs", lambda *a, **k: {tmp_run.run_id: 10, "old": 3}
-    )
-    assert not svc.pinot_serves("pnl_scenarios", tmp_run.as_of_date, tmp_run.run_id)
-    monkeypatch.setattr(service_mod.pinot, "loaded_runs", lambda *a, **k: {tmp_run.run_id: 10})
-    assert svc.pinot_serves("pnl_scenarios", tmp_run.as_of_date, tmp_run.run_id)
+    assert serving({run: full})
+    assert not serving({"other-run": full})
+    assert not serving({run: full, "old": 3})
+    assert not serving({run: full - 1})  # partly loaded: same run, fewer rows
+    assert not serving({run: full + 1})
+    assert not serving({})
+    assert not svc.pinot_serves("pnl_scenarios", datetime.date(2001, 1, 1), run)
     monkeypatch.setattr(
         service_mod.pinot,
         "loaded_runs",
         lambda *a, **k: (_ for _ in ()).throw(httpx.ConnectError("refused")),
     )
-    assert not svc.pinot_serves("pnl_scenarios", tmp_run.as_of_date, tmp_run.run_id)
+    assert not svc.pinot_serves("pnl_scenarios", date, run)
