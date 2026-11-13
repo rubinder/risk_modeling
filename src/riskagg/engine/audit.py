@@ -7,6 +7,7 @@ extension point: later tasks append ``(ctx, spark) -> Check`` functions for stre
 import itertools
 import json
 import math
+import os
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -28,6 +29,9 @@ from riskagg.semantic.model import Measure, load_model
 from riskagg.spark import SESSION_CONF
 
 TOLERANCE = 1e-6
+# Vector-measure rows are compared tighter, relative to their operands: at demo scale (values
+# of order 1e10) 1e-6 would let an error of 1e4 through, while float noise is about 1e-15.
+VECTOR_TOLERANCE = 1e-9
 
 
 @dataclass(frozen=True)
@@ -56,9 +60,13 @@ def git_commit(cwd: Path = REPO_ROOT) -> str:
     """Short commit of ``cwd``'s checkout, with ``-dirty`` when a tracked file has uncommitted
     changes (untracked files do not count); ``unknown`` outside a git checkout."""
 
+    # No optional locks: `git status` would otherwise take the index lock to refresh it, and fail
+    # (recording "unknown") while another git command holds that lock.
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+
     def git(*args: str) -> str:
         return subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+            ["git", *args], cwd=cwd, env=env, capture_output=True, text=True, check=True
         ).stdout.strip()
 
     try:
@@ -112,13 +120,17 @@ def record_reconciliation(ctx: RunContext, checks: list[Check]) -> None:
     _save(ctx, manifest)
 
 
-def _within(diff: str, ref: str) -> "F.Column":
-    return F.abs(F.col(diff)) <= TOLERANCE * F.greatest(F.lit(1.0), F.abs(F.col(ref)))
+def _within(diff: str, scale: str) -> "F.Column":
+    """``|diff| <= TOLERANCE x max(1, |scale|)``; ``scale`` is the operands' magnitude."""
+    return F.abs(F.col(diff)) <= TOLERANCE * F.greatest(F.lit(1.0), F.abs(F.col(scale)))
 
 
 def _grain_cells(df: DataFrame, value: str) -> DataFrame:
-    """``df``'s P&L summed per reporting-grain cell, window and scenario."""
-    return df.groupBy(*GRAIN_DIMS, "window", "scenario_idx").agg(F.sum("pnl").alias(value))
+    """``df``'s P&L summed per reporting-grain cell, window and scenario, with the sum of the
+    absolute values of the summed rows (``<value>_abs``, the scale of the float noise)."""
+    return df.groupBy(*GRAIN_DIMS, "window", "scenario_idx").agg(
+        F.sum("pnl").alias(value), F.sum(F.abs("pnl")).alias(f"{value}_abs")
+    )
 
 
 def check_pnl_scenarios_match_raw_per_grain_cell(ctx: RunContext, spark: SparkSession) -> Check:
@@ -146,7 +158,7 @@ def check_pnl_scenarios_match_raw_per_grain_cell(ctx: RunContext, spark: SparkSe
     stats = joined.agg(
         F.count(F.lit(1)).alias("n"),
         F.sum((F.col("raw_pnl").isNull() | F.col("curated_pnl").isNull()).cast("int")).alias("miss"),
-        F.sum((~_within("diff", "raw_pnl")).cast("int")).alias("bad"),
+        F.sum((~_within("diff", "raw_pnl_abs")).cast("int")).alias("bad"),
         F.max(F.abs("diff")).alias("max_diff"),
     ).first()
     missing, bad, n = stats["miss"] or 0, stats["bad"] or 0, stats["n"]
@@ -182,20 +194,23 @@ def _node_vectors(
 
 def _expected_vector_rows(
     measure: Measure, spec: AggregationSpec, org: tuple[str, ...], vectors: dict
-) -> dict[tuple, float]:
-    """``{(measure name, node_level, node key): value}`` a spec should have stored.
+) -> dict[tuple, tuple[float, float]]:
+    """``{(measure name, node_level, node key): (value, scale)}`` a spec should have stored.
 
     ``vectors[node_level]`` holds that level's node vectors; ``node key`` is the tuple of the
     level's dimension values. Diversification rows pair consecutive org levels of the spec,
-    shortest first, as the engine does.
+    shortest first, as the engine does. ``scale`` is the magnitude of the row's operands, which
+    sets the tolerance: a diversification or incremental row is a difference of two large
+    numbers and can legitimately be about 0, with float noise of the operands' size.
     """
     window = measure.params["window"]
-    out: dict[tuple, float] = {}
+    out: dict[tuple, tuple[float, float]] = {}
     for gs in unique_sets(spec.grouping_sets):
         level = node_level(gs)
         for (w, *key), vec in vectors[level].items():
             if w == window:
-                out[(measure.name, level, tuple(key))] = _vector_value(measure, vec)
+                value = _vector_value(measure, vec)
+                out[(measure.name, level, tuple(key))] = (value, abs(value))
     if not spec.diversification:
         return out
     by_len = {len(gs): tuple(gs) for gs in spec.grouping_sets if tuple(gs) == org[: len(gs)]}
@@ -205,20 +220,36 @@ def _expected_vector_rows(
         parents = {tuple(k): v for (w, *k), v in vectors[p_level].items() if w == window}
         children = {tuple(k): v for (w, *k), v in vectors[c_level].items() if w == window}
         for pkey, pvec in parents.items():
-            standalone = sum(
+            values = [
                 _vector_value(measure, c) for ckey, c in children.items()
                 if ckey[: len(pkey)] == pkey
-            )  # fmt: skip
-            out[(f"{measure.name}__sum_children", p_level, pkey)] = standalone
+            ]  # fmt: skip
+            standalone, terms = sum(values), sum(abs(v) for v in values)
+            own = _vector_value(measure, pvec)
+            out[(f"{measure.name}__sum_children", p_level, pkey)] = (standalone, terms)
             out[(f"{measure.name}__diversification", p_level, pkey)] = (
-                standalone - _vector_value(measure, pvec)
-            )
+                standalone - own, max(terms, abs(own))
+            )  # fmt: skip
         for ckey, cvec in children.items():
             pvec = parents[ckey[: len(parent)]]
-            out[(f"{measure.name}__incremental", c_level, ckey)] = _vector_value(
-                measure, pvec
-            ) - _vector_value(measure, pvec - cvec)
+            with_child, without = _vector_value(measure, pvec), _vector_value(measure, pvec - cvec)
+            out[(f"{measure.name}__incremental", c_level, ckey)] = (
+                with_child - without, max(abs(with_child), abs(without))
+            )  # fmt: skip
     return out
+
+
+def _vector_row_problems(
+    stored: Mapping[tuple, float], expected: Mapping[tuple, tuple[float, float]]
+) -> list[str]:
+    """Missing, extra and wrong rows; a value is wrong beyond ``VECTOR_TOLERANCE`` x its scale."""
+    problems = [f"{k}: stored but not expected" for k in sorted(set(stored) - set(expected), key=str)]
+    problems += [f"{k}: expected but not stored" for k in sorted(set(expected) - set(stored), key=str)]
+    for key, (exp, scale) in expected.items():
+        got = stored.get(key)
+        if got is not None and not _close(got, exp, scale=scale, rel=VECTOR_TOLERANCE):
+            problems.append(f"{key}: stored {got} vs recomputed {exp}")
+    return problems
 
 
 def check_vector_measures_from_pnl_scenarios(ctx: RunContext, spark: SparkSession) -> Check:
@@ -249,7 +280,7 @@ def check_vector_measures_from_pnl_scenarios(ctx: RunContext, spark: SparkSessio
         )
         if any(r[d] != ROLLED_UP for d in GRAIN_DIMS if d not in dims):
             problems.append(f"{r['measure']} row at {r['node_level']} has a non-* rolled-up dim")
-    expected: dict[tuple, float] = {}
+    expected: dict[tuple, tuple[float, float]] = {}
     pnl = spark.read.parquet(str(ctx.curated("pnl_scenarios")))
     cache: dict[tuple, dict] = {}
     declared = {n for n, s in specs.items() if s.measure in vector}
@@ -268,14 +299,7 @@ def check_vector_measures_from_pnl_scenarios(ctx: RunContext, spark: SparkSessio
             model.measure(spec.measure), spec, model.hierarchies["org"], vectors
         )
         expected |= {(agg, *k): v for k, v in rows.items()}
-    for key in sorted(set(stored) - set(expected), key=str):
-        problems.append(f"{key}: stored but not expected")
-    for key in sorted(set(expected) - set(stored), key=str):
-        problems.append(f"{key}: expected but not stored")
-    for key, exp in expected.items():
-        got = stored.get(key)
-        if got is not None and not abs(got - exp) <= TOLERANCE * max(1.0, abs(exp)):
-            problems.append(f"{key}: stored {got} vs recomputed {exp}")
+    problems += _vector_row_problems(stored, expected)
     detail = f"{len(expected)} vector-measure rows recomputed"
     if problems:
         detail += f"; {len(problems)} problems: " + "; ".join(problems[:5])
@@ -311,18 +335,21 @@ def check_stress_firm_pnl_is_sum_of_trades(ctx: RunContext, spark: SparkSession)
     factors = spark.read.parquet(str(ctx.raw("risk_factors"))).collect()
     unknown = sorted(set(by_factor) - {f["risk_factor_id"] for f in factors})
     expected: dict[str, float] = {}
+    scale: dict[str, float] = {}  # sum of |terms|: the tolerance's yardstick (totals net out)
     for sc in scenarios:
-        total = 0.0
+        total = size = 0.0
         for f in factors:
             agg = by_factor.get(f["risk_factor_id"])
             if agg is None:
                 continue
             x = sc.shock_for(f["risk_class"], f["factor_type"], f["bucket"], f["currency"])
             if f["factor_type"] == "DELTA":
-                total += agg["delta"] * x + 0.5 * agg["gamma"] * x * x
+                terms = (agg["delta"] * x, 0.5 * agg["gamma"] * x * x)
             else:
-                total += agg["vega"] * x
-        expected[sc.name] = total
+                terms = (agg["vega"] * x,)
+            total += sum(terms)
+            size += sum(abs(t) for t in terms)
+        expected[sc.name], scale[sc.name] = total, size
     stored = {
         r["scenario"]: r["pnl"]
         for r in spark.read.parquet(str(ctx.curated("stress_results")))
@@ -337,7 +364,7 @@ def check_stress_firm_pnl_is_sum_of_trades(ctx: RunContext, spark: SparkSession)
         problems.append(f"scenarios {sorted(stored)} stored vs {sorted(expected)} defined")
     for sc, exp in expected.items():
         got = stored.get(sc)
-        if got is not None and abs(got - exp) > TOLERANCE * max(1.0, abs(exp)):
+        if got is not None and not _close(got, exp, scale=scale[sc]):
             problems.append(f"{sc}: stored {got} vs raw {exp}")
     worst = (
         spark.read.parquet(str(ctx.curated("risk_metrics")))
@@ -351,9 +378,7 @@ def check_stress_firm_pnl_is_sum_of_trades(ctx: RunContext, spark: SparkSession)
         scen, loss = min(
             ((n, -v) for n, v in sorted(expected.items())), key=lambda t: (-t[1], t[0])
         )
-        if worst[0]["scenario"] != scen or abs(worst[0]["value"] - loss) > TOLERANCE * max(
-            1.0, abs(loss)
-        ):
+        if worst[0]["scenario"] != scen or not _close(worst[0]["value"], loss, scale=scale[scen]):
             problems.append(
                 f"firm worst {worst[0]['scenario']} {worst[0]['value']} vs raw {scen} {loss}"
             )
@@ -396,7 +421,9 @@ def check_frtb_sa_is_sum_of_components(ctx: RunContext, spark: SparkSession) -> 
     )
 
 
-def _firm_drc_rrao_from_raw(ctx: RunContext, spark: SparkSession) -> dict[str, float]:
+def _firm_drc_rrao_from_raw(
+    ctx: RunContext, spark: SparkSession
+) -> dict[str, tuple[float, float]]:
     """Firm default risk charge and residual risk add-on in plain Python from the raw files.
 
     Reads ``config/reference/frtb_drc.yaml`` itself (not through ``measures.frtb_drc``). Spark
@@ -405,6 +432,7 @@ def _firm_drc_rrao_from_raw(ctx: RunContext, spark: SparkSession) -> dict[str, f
     MAR22: JTD = +/- LGD x notional, netted per issuer; per bucket, HBR = long / (long + |short|)
     and charge = max(sum RW x long - HBR x sum RW x |short|, 0); the DRC sums the buckets.
     MAR23.8(2)(a): RRAO = 1.0% x gross notional of exotic trades.
+    Returns ``{measure: (value, scale)}``; the DRC's scale is the size of the terms it nets.
     """
     ref = yaml.safe_load(frtb_drc_path().read_text())
     lgd = {str(k).upper(): float(v) for k, v in ref["default_risk"]["lgd"].items()}
@@ -428,10 +456,11 @@ def _firm_drc_rrao_from_raw(ctx: RunContext, spark: SparkSession) -> dict[str, f
         acc[1] += short
         acc[2] += rw[rating] * long_
         acc[3] += rw[rating] * short
-    drc = 0.0
+    drc = drc_scale = 0.0
     for long_, short, rw_long, rw_short in buckets.values():
         hbr = long_ / (long_ + short) if long_ + short > 0 else 0.0
         drc += max(rw_long - hbr * rw_short, 0.0)
+        drc_scale += rw_long + hbr * rw_short
     exotic = (
         spark.read.parquet(str(ctx.raw("trades")))
         .where(F.col("is_exotic"))
@@ -439,7 +468,7 @@ def _firm_drc_rrao_from_raw(ctx: RunContext, spark: SparkSession) -> dict[str, f
         .first()["notional"]
     )
     rrao = float(ref["residual_risk_add_on"]["exotic"]) * (exotic or 0.0)
-    return {"frtb_drc_charge": drc, "frtb_rrao_charge": rrao}
+    return {"frtb_drc_charge": (drc, drc_scale), "frtb_rrao_charge": (rrao, rrao)}
 
 
 def check_frtb_drc_rrao_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
@@ -458,11 +487,11 @@ def check_frtb_drc_rrao_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
         .collect()
     }
     problems = []
-    for measure, exp in expected.items():
+    for measure, (exp, scale) in expected.items():
         got = stored.get(measure)
         if got is None:
             problems.append(f"{measure}: no firm row")
-        elif not _close(got, exp):
+        elif not _close(got, exp, scale=scale):
             problems.append(f"{measure}: stored {got} vs raw {exp}")
     detail = f"{len(expected)} firm FRTB components recomputed" + (
         f"; {'; '.join(problems)}" if problems else ""
@@ -640,10 +669,15 @@ def _ccar_from_raw(ctx: RunContext, spark: SparkSession) -> tuple[dict, dict]:
     return rows, metrics
 
 
-def _close(a: float | None, b: float | None) -> bool:
+def _close(
+    a: float | None, b: float | None, scale: float | None = None, rel: float = TOLERANCE
+) -> bool:
+    """``|a - b| <= rel x max(1, scale)``. ``scale`` is the magnitude of the operands ``b`` was
+    computed from (default ``|b|``): a difference of large numbers can be about 0, with float
+    noise of the operands' size, so its own size is the wrong yardstick."""
     if a is None or b is None:
         return a is None and b is None
-    return abs(a - b) <= TOLERANCE * max(1.0, abs(b))
+    return abs(a - b) <= rel * max(1.0, abs(b) if scale is None else scale)
 
 
 def check_ccar_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
@@ -662,21 +696,31 @@ def check_ccar_from_raw(ctx: RunContext, spark: SparkSession) -> Check:
     if set(stored) != set(expected_rows):
         problems.append(f"{len(stored)} stored rows vs {len(expected_rows)} expected (keys differ)")
     columns = (*ccar.LOSS_COLUMNS, *ccar.CAPITAL_COLUMNS)
+    flows = ("ppnr", "credit_loss", "trading_loss", "net_income")
+
+    def flow_scale(row: dict) -> float:
+        """ppnr and net income are differences that can be about 0: compare flows against the
+        size of the row's flows, not their own size."""
+        return sum(abs(row[c]) for c in ("ppnr", "credit_loss", "trading_loss"))
+
     for key, exp in expected_rows.items():
         got = stored.get(key)
         if got is None:
             continue
         for c in columns:
-            if not _close(got[c], exp[c]):
+            scale = flow_scale(exp) if c in flows else None
+            if not _close(got[c], exp[c], scale=scale):
                 problems.append(f"{key} {c}: stored {got[c]} vs raw {exp[c]}")
     for (scenario, q) in {(k[0], k[1]) for k in stored}:
-        for c in ("ppnr", "credit_loss", "trading_loss", "net_income"):
+        firm_row = stored.get((scenario, q, ccar.FIRM, ccar.FIRM_ID))
+        scale = flow_scale(firm_row) if firm_row else None
+        for c in flows:
             by_level = {
                 level: sum(v[c] for k, v in stored.items() if k[:3] == (scenario, q, level))
                 for level in (ccar.BUSINESS_LINE, ccar.LEGAL_ENTITY, ccar.FIRM)
             }
             firm = by_level[ccar.FIRM]
-            if not all(_close(v, firm) for v in by_level.values()):
+            if not all(_close(v, firm, scale=scale) for v in by_level.values()):
                 problems.append(f"{scenario} q{q} {c}: levels do not reconcile {by_level}")
     metric_rows = (
         spark.read.parquet(str(ctx.curated("risk_metrics")))
