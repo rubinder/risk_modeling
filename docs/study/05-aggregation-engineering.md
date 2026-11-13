@@ -141,9 +141,12 @@ would need measuring.
 
 The serving layer (Pinot, or Parquet when Pinot is not up) must not undo the care above:
 
-- `risk_metrics` holds VaR and ES only at the nodes the specifications computed. Summing
-  stored VaRs over a dimension is the classic wrong answer, and nothing in the query layer
-  does it.
+- `risk_metrics` holds VaR and ES only at the nodes the specifications computed. The shipped
+  specifications (`config/aggregations.yaml`) store 99% one-day VaR, 99% ten-day VaR, 97.5%
+  ES and stressed VaR at the firm, every business line, desk and book, each with its
+  `__sum_children`, `__diversification` and `__incremental` rows, and 99% one-day VaR by
+  desk and asset class; the data dictionary and `GET /catalog` say which. Summing stored
+  VaRs over a dimension is the classic wrong answer, and nothing in the query layer does it.
 - `pnl_scenarios` holds the reporting-grain vectors exploded to one row per scenario
   (`write_pnl_scenarios` in `src/riskagg/serving/curate.py`). This is the one place the
   project explodes: Pinot has no element-wise array aggregation, and within one scenario P&L

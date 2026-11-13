@@ -26,6 +26,7 @@ from typer.testing import CliRunner
 from riskagg import paths
 from riskagg.cli import app
 from riskagg.context import official_run
+from riskagg.engine.spec import load_specs
 from riskagg.paths import REPO_ROOT
 from riskagg.semantic.dictionary import render_dictionary, write_dictionary
 from riskagg.semantic.model import load_model
@@ -65,6 +66,30 @@ def test_dictionary_lists_every_measure_dimension_and_table(tmp_path):
     assert "vector" in var and "USD" in var and "never summed" in var.lower()
     scb = text[text.index("### `ccar_scb`") :].split("\n### ", 1)[0]
     assert "`firm_id`, `legal_entity`" in scb and "not allocated" in scb.lower()
+
+
+def _section_of(text: str, heading: str) -> str:
+    return text[text.index(heading) :].split("\n### ", 1)[0]
+
+
+def test_dictionary_lists_a_vector_measure_as_stored_only_when_a_spec_declares_it():
+    model = load_model()
+    specs = load_specs(None, model)
+    full = render_dictionary(model, specs)
+    stored = _section_of(full, "### `risk_metrics`")
+    for m in ("var_99_1d", "var_99_10d", "es_975_1d", "svar_99_1d"):
+        assert f"`{m}`" in stored and f"`{m}__diversification`" in stored, m
+    assert "`var_by_org`" in _section_of(full, "### `var_99_1d`")
+    # derived rows are documented, not only named
+    for suffix in ("sum_children", "diversification", "incremental"):
+        assert f"`<measure>__{suffix}`" in full, suffix
+
+    without = render_dictionary(model, [s for s in specs if s.measure != "var_99_10d"])
+    stored = _section_of(without, "### `risk_metrics`")
+    assert "`var_99_10d`" not in stored and "`var_99_10d__" not in stored
+    assert "`var_99_1d`" in stored
+    measure = _section_of(without, "### `var_99_10d`")
+    assert "no specification" in measure and "risk_metrics" in measure
 
 
 def test_committed_dictionary_is_current():

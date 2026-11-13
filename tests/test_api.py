@@ -88,6 +88,16 @@ def test_catalog(api, tmp_run):
     assert "counterparty_id" in body["dimensions"]
     assert body["hierarchies"]["org"] == ["firm_id", "business_line_id", "desk_id", "book_id"]
     assert set(body["tables"]) == set(tmp_run.model.tables)
+    # where each measure is precomputed, and the derived rows stored beside it
+    assert set(body["derived_rows"]) == {"sum_children", "diversification", "incremental"}
+    (stored,) = [s for s in var["stored_in_risk_metrics"] if s["aggregation"] == "var_by_org"]
+    assert stored["node_levels"][0] == "firm_id"
+    assert stored["derived_measures"] == [
+        "var_99_1d__sum_children", "var_99_1d__diversification", "var_99_1d__incremental",
+    ]  # fmt: skip
+    assert body["measures"]["stress_pnl"]["stored_in_risk_metrics"] == []
+    es = body["measures"]["es_975_1d"]["stored_in_risk_metrics"]
+    assert [s["aggregation"] for s in es] == ["es_by_org"]
 
 
 def test_drilldown(api, tmp_run):

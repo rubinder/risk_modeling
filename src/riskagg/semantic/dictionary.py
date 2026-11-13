@@ -1,13 +1,17 @@
 """The data dictionary: the semantic model rendered as Markdown for people.
 
 Per measure: business name, description, unit, aggregation class, the slices it may be
-queried at and the rule for combining it. Per dimension: where it can be used. Per table: what
-a row is, how its columns may be combined, and its columns. Everything comes from
-``config/semantic_model.yaml``; ``riskagg dictionary`` writes ``docs/data-dictionary.md``.
+queried at, where it is precomputed and the rule for combining it. Per dimension: where it can
+be used. Per table: what a row is, which measures and derived rows it stores, how its columns
+may be combined, and its columns. Everything comes from ``config/semantic_model.yaml`` and,
+for what is precomputed, ``config/aggregations.yaml``; ``riskagg dictionary`` writes
+``docs/data-dictionary.md``.
 """
 
+from collections.abc import Sequence
 from pathlib import Path
 
+from riskagg.engine.spec import AggregationSpec, load_specs, stored_by
 from riskagg.semantic.model import Measure, SemanticModel
 
 HEADER = """# Data dictionary
@@ -76,7 +80,24 @@ def _row(label: str, value: str) -> str:
     return f"| {label} | {' '.join(str(value).split())} |"
 
 
-def _measure(model: SemanticModel, m: Measure) -> list[str]:
+def _precomputed(m: Measure, specs: Sequence[AggregationSpec]) -> str:
+    stored = stored_by(specs, m.name)
+    if not stored:
+        return (
+            f"not stored in `{m.table}`: no specification in `config/aggregations.yaml` "
+            "declares it"
+        )
+    parts = []
+    for s in stored:
+        levels = "; ".join(f"({_dims(level.split('|'))})" for level in s["node_levels"])
+        text = f"`{s['aggregation']}` at {levels}"
+        if s["derived_measures"]:
+            text += f", with derived rows {_dims(s['derived_measures'])}"
+        parts.append(text)
+    return f"in `{m.table}` by " + "; and ".join(parts)
+
+
+def _measure(model: SemanticModel, m: Measure, specs: Sequence[AggregationSpec]) -> list[str]:
     rows = [
         _row("Business name", m.label),
         _row("Description", m.description),
@@ -86,14 +107,13 @@ def _measure(model: SemanticModel, m: Measure) -> list[str]:
     if m.params:
         rows.append(_row("Parameters", ", ".join(f"{k} {v}" for k, v in m.params.items())))
     if m.measure_class == "vector":
-        source = (
-            f"queries: `{model.vector_table}`; aggregations declared in "
-            f"`config/aggregations.yaml` also store rows in `{m.table}`"
-        )
+        source = f"queries: `{model.vector_table}`; stored rows: `{m.table}` (see below)"
     else:
         source = f"`{m.table}`"
+    rows.append(_row("Answered from", source))
+    if m.measure_class != "additive":
+        rows.append(_row("Precomputed", _precomputed(m, specs)))
     rows += [
-        _row("Answered from", source),
         _row("May be queried by", _slices(model, m)),
         _row("Rule for combining", _rule(m)),
     ]
@@ -126,12 +146,29 @@ def _dimension(model: SemanticModel, name: str, spec: dict) -> list[str]:
     return [f"### `{name}`", "", "| | |", "|---|---|", *rows, ""]
 
 
-def _table(model: SemanticModel, name: str, spec: dict) -> list[str]:
-    stored = [m.name for m in model.measures.values() if m.table == name]
+def _table(
+    model: SemanticModel, name: str, spec: dict, specs: Sequence[AggregationSpec]
+) -> list[str]:
+    """A vector or structured measure counts as stored only where a specification declares it;
+    an additive measure's table is its data."""
+    stored, derived = [], []
+    for m in model.measures.values():
+        if m.table != name:
+            continue
+        by = stored_by(specs, m.name)
+        if m.measure_class == "additive" or by:
+            stored.append(m.name)
+        derived += [d for s in by for d in s["derived_measures"] if d not in derived]
     vectors = [m.name for m in model.measures.values() if m.measure_class == "vector"]
     lines = [f"### `{name}`", "", " ".join(spec.get("description", "").split()), ""]
     if stored:
         lines += [f"Measures stored in it: {_dims(stored)}.", ""]
+    if derived:
+        lines += [f"Derived rows stored in it (see below): {_dims(derived)}.", ""]
+    for suffix, text in (spec.get("derived_rows") or {}).items():
+        lines += [f"- `<measure>__{suffix}`: {' '.join(str(text).split())}"]
+    if spec.get("derived_rows"):
+        lines += [""]
     if name == model.vector_table and vectors:
         lines += [f"Every query of {_dims(vectors)} is answered from it.", ""]
     if not stored and name != model.vector_table:
@@ -143,17 +180,22 @@ def _table(model: SemanticModel, name: str, spec: dict) -> list[str]:
     return [*lines, ""]
 
 
-def render_dictionary(model: SemanticModel) -> str:
+def render_dictionary(
+    model: SemanticModel, specs: Sequence[AggregationSpec] | None = None
+) -> str:
+    """The dictionary of ``model``; what is precomputed comes from ``specs`` (default: the
+    shipped ``config/aggregations.yaml``)."""
+    specs = load_specs(None, model) if specs is None else specs
     lines = [HEADER, "## Measures", ""]
     for m in model.measures.values():
-        lines += _measure(model, m)
+        lines += _measure(model, m, specs)
     lines += ["## Dimensions", ""]
     lines += [f"Reporting grain: {_dims(model.grain)}.", ""]
     for name, spec in model.dimensions.items():
         lines += _dimension(model, name, spec)
     lines += ["## Tables", ""]
     for name, spec in model.tables.items():
-        lines += _table(model, name, spec)
+        lines += _table(model, name, spec, specs)
     return "\n".join(lines).rstrip("\n") + "\n"
 
 

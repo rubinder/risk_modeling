@@ -117,3 +117,13 @@ def load_model(path: str | Path | None = None) -> SemanticModel:
     if any(m.measure_class == "vector" for m in measures.values()) and vector_table not in tables:
         raise SpecError(f"vector_table '{vector_table}' is not one of the tables {sorted(tables)}")
     return SemanticModel(dimensions, hierarchies, grain, measures, tables, vector_table)
+
+
+def derived_rows(model: SemanticModel) -> dict[str, str]:
+    """``{suffix: description}`` of the ``<measure>__<suffix>`` rows a table declares under
+    ``derived_rows`` (``risk_metrics``: diversification rows of vector measures)."""
+    return {
+        suffix: " ".join(str(text).split())
+        for spec in model.tables.values()
+        for suffix, text in (spec.get("derived_rows") or {}).items()
+    }

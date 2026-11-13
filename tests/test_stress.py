@@ -339,8 +339,19 @@ def test_star_tree_applies_to_stress_results_only():
 
 def test_shipped_specs_and_measures():
     model = load_model()
-    names = {s.name for s in load_specs(None, model)}
-    assert {"worst_stress_by_org", "var_by_org"} <= names
+    specs = {s.name: s for s in load_specs(None, model)}
+    assert {"worst_stress_by_org", "var_by_org"} <= set(specs)
+    org = model.hierarchies["org"]
+    org_sets = tuple(org[: i + 1] for i in range(len(org)))
+    # Design 5.1: VaR, 10-day VaR, ES and stressed VaR at every org node, with diversification.
+    for name, measure in [
+        ("var_by_org", "var_99_1d"), ("var_10d_by_org", "var_99_10d"),
+        ("es_by_org", "es_975_1d"), ("svar_by_org", "svar_99_1d"),
+    ]:  # fmt: skip
+        spec = specs[name]
+        assert (spec.measure, spec.grouping_sets, spec.filters, spec.diversification) == (
+            measure, org_sets, {}, True
+        ), name
     assert "stress_pnl" not in {s.measure for s in load_specs(None, model)}  # served by query
     m = model.measure("stress_pnl")
     assert (m.measure_class, m.table) == ("additive", "stress_results")

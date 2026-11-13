@@ -7,6 +7,33 @@
     - [firm_id, business_line_id, desk_id, book_id]
   filters: {}
   diversification: true
+- name: es_by_org
+  measure: es_975_1d
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, business_line_id]
+    - [firm_id, business_line_id, desk_id]
+    - [firm_id, business_line_id, desk_id, book_id]
+  filters: {}
+  diversification: true
+- name: svar_by_org
+  measure: svar_99_1d
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, business_line_id]
+    - [firm_id, business_line_id, desk_id]
+    - [firm_id, business_line_id, desk_id, book_id]
+  filters: {}
+  diversification: true
+- name: var_10d_by_org
+  measure: var_99_10d
+  grouping_sets:
+    - [firm_id]
+    - [firm_id, business_line_id]
+    - [firm_id, business_line_id, desk_id]
+    - [firm_id, business_line_id, desk_id, book_id]
+  filters: {}
+  diversification: true
 - name: var_by_desk_asset_class
   measure: var_99_1d
   grouping_sets:

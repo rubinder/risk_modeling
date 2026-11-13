@@ -25,6 +25,9 @@ def test_shipped_config_loads():
     specs = load_specs(aggregations_path(), model)
     assert [s.name for s in specs] == [
         "var_by_org",
+        "es_by_org",
+        "svar_by_org",
+        "var_10d_by_org",
         "var_by_desk_asset_class",
         "worst_stress_by_org",
         "frtb_sa_by_org",

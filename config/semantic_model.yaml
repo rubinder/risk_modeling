@@ -203,6 +203,21 @@ tables:
       One row per aggregation, measure and node of the official run. node_level names the node's
       grouping set (dimensions joined by |); a dimension the node does not group by holds *.
       Every measure here is looked up, never summed across rows.
+    # Rows a vector specification with diversification: true stores beside its measure,
+    # between consecutive org levels of the specification (src/riskagg/measures/var.py).
+    derived_rows:
+      sum_children: >-
+        At a parent node: the sum of the standalone values of its children at the next org
+        level of the specification. The one deliberate sum of vector-measure values, shown
+        beside the parent's own value; never a substitute for it.
+      diversification: >-
+        At a parent node: <measure>__sum_children minus the parent's own value, the diversification
+        benefit. Never negative for ES (subadditive); it can be negative for VaR.
+      incremental: >-
+        At a child node: the parent's value minus the value of the parent's vector without
+        this child, with the same function, level, window and horizon. Negative for a hedge;
+        not the child's standalone value, and the children's incrementals do not add up to
+        the parent.
     columns:
       as_of_date: {type: DATE, role: time}
       run_id: {type: STRING, role: dimension}

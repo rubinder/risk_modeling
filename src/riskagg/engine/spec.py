@@ -11,7 +11,18 @@ import yaml
 from riskagg.paths import aggregations_path
 from riskagg.semantic.model import SemanticModel, SpecError
 
-__all__ = ["AggregationSpec", "SpecError", "load_specs", "spec_hash"]
+__all__ = [
+    "DERIVED_SUFFIXES",
+    "AggregationSpec",
+    "SpecError",
+    "load_specs",
+    "spec_hash",
+    "stored_by",
+]
+
+# Rows a vector spec with ``diversification: true`` stores as ``<measure>__<suffix>``
+# (``measures/var.py``); described under ``derived_rows`` of ``risk_metrics`` in the model.
+DERIVED_SUFFIXES = ("sum_children", "diversification", "incremental")
 
 
 @dataclass(frozen=True)
@@ -86,6 +97,23 @@ def load_specs(path: str | Path | None, model: SemanticModel) -> list[Aggregatio
         _validate(spec, model)
         specs.append(spec)
     return specs
+
+
+def stored_by(specs: Iterable[AggregationSpec], measure: str) -> list[dict]:
+    """Where ``measure`` is precomputed: per spec, its node levels and derived measures."""
+    out = []
+    for s in specs:
+        if s.measure != measure:
+            continue
+        seen: set[frozenset[str]] = set()
+        levels = []
+        for gs in s.grouping_sets:  # one node level per set of dimensions, first order wins
+            if frozenset(gs) not in seen:
+                seen.add(frozenset(gs))
+                levels.append("|".join(gs))
+        derived = [f"{measure}__{d}" for d in DERIVED_SUFFIXES] if s.diversification else []
+        out.append({"aggregation": s.name, "node_levels": levels, "derived_measures": derived})
+    return out
 
 
 def spec_hash(specs: Iterable[AggregationSpec], reference_paths: Iterable[str | Path] = ()) -> str:

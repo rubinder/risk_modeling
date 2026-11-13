@@ -26,7 +26,8 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | vector |
 | Parameters | level 0.99, window CURRENT, horizon_days 1 |
-| Answered from | queries: `pnl_scenarios`; aggregations declared in `config/aggregations.yaml` also store rows in `risk_metrics` |
+| Answered from | queries: `pnl_scenarios`; stored rows: `risk_metrics` (see below) |
+| Precomputed | in `risk_metrics` by `var_by_org` at (`firm_id`); (`firm_id`, `business_line_id`); (`firm_id`, `business_line_id`, `desk_id`); (`firm_id`, `business_line_id`, `desk_id`, `book_id`), with derived rows `var_99_1d__sum_children`, `var_99_1d__diversification`, `var_99_1d__incremental`; and `var_by_desk_asset_class` at (`desk_id`, `asset_class`) |
 | May be queried by | any subset of: `firm_id`, `business_line_id`, `desk_id`, `book_id`, `legal_entity`, `region`, `asset_class`, `currency`, `risk_class` |
 | Rule for combining | Never summed. The P&L of the slice is summed scenario by scenario from `pnl_scenarios` (CURRENT window), then the VaR at 0.99 is taken of each group's vector (`src/riskagg/conventions.py`). |
 
@@ -39,7 +40,8 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | vector |
 | Parameters | level 0.99, window CURRENT, horizon_days 10 |
-| Answered from | queries: `pnl_scenarios`; aggregations declared in `config/aggregations.yaml` also store rows in `risk_metrics` |
+| Answered from | queries: `pnl_scenarios`; stored rows: `risk_metrics` (see below) |
+| Precomputed | in `risk_metrics` by `var_10d_by_org` at (`firm_id`); (`firm_id`, `business_line_id`); (`firm_id`, `business_line_id`, `desk_id`); (`firm_id`, `business_line_id`, `desk_id`, `book_id`), with derived rows `var_99_10d__sum_children`, `var_99_10d__diversification`, `var_99_10d__incremental` |
 | May be queried by | any subset of: `firm_id`, `business_line_id`, `desk_id`, `book_id`, `legal_entity`, `region`, `asset_class`, `currency`, `risk_class` |
 | Rule for combining | Never summed. The P&L of the slice is summed scenario by scenario from `pnl_scenarios` (CURRENT window), then the VaR at 0.99 is taken of each group's vector (`src/riskagg/conventions.py`). Scaled by sqrt(10) to the horizon. |
 
@@ -52,7 +54,8 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | vector |
 | Parameters | level 0.975, window CURRENT, horizon_days 1 |
-| Answered from | queries: `pnl_scenarios`; aggregations declared in `config/aggregations.yaml` also store rows in `risk_metrics` |
+| Answered from | queries: `pnl_scenarios`; stored rows: `risk_metrics` (see below) |
+| Precomputed | in `risk_metrics` by `es_by_org` at (`firm_id`); (`firm_id`, `business_line_id`); (`firm_id`, `business_line_id`, `desk_id`); (`firm_id`, `business_line_id`, `desk_id`, `book_id`), with derived rows `es_975_1d__sum_children`, `es_975_1d__diversification`, `es_975_1d__incremental` |
 | May be queried by | any subset of: `firm_id`, `business_line_id`, `desk_id`, `book_id`, `legal_entity`, `region`, `asset_class`, `currency`, `risk_class` |
 | Rule for combining | Never summed. The P&L of the slice is summed scenario by scenario from `pnl_scenarios` (CURRENT window), then the ES at 0.975 is taken of each group's vector (`src/riskagg/conventions.py`). |
 
@@ -65,7 +68,8 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | vector |
 | Parameters | level 0.99, window STRESSED, horizon_days 1 |
-| Answered from | queries: `pnl_scenarios`; aggregations declared in `config/aggregations.yaml` also store rows in `risk_metrics` |
+| Answered from | queries: `pnl_scenarios`; stored rows: `risk_metrics` (see below) |
+| Precomputed | in `risk_metrics` by `svar_by_org` at (`firm_id`); (`firm_id`, `business_line_id`); (`firm_id`, `business_line_id`, `desk_id`); (`firm_id`, `business_line_id`, `desk_id`, `book_id`), with derived rows `svar_99_1d__sum_children`, `svar_99_1d__diversification`, `svar_99_1d__incremental` |
 | May be queried by | any subset of: `firm_id`, `business_line_id`, `desk_id`, `book_id`, `legal_entity`, `region`, `asset_class`, `currency`, `risk_class` |
 | Rule for combining | Never summed. The P&L of the slice is summed scenario by scenario from `pnl_scenarios` (STRESSED window), then the VaR at 0.99 is taken of each group's vector (`src/riskagg/conventions.py`). |
 
@@ -90,6 +94,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | structured |
 | Answered from | `risk_metrics` |
+| Precomputed | in `risk_metrics` by `worst_stress_by_org` at (`firm_id`); (`firm_id`, `business_line_id`); (`firm_id`, `business_line_id`, `desk_id`); (`firm_id`, `business_line_id`, `desk_id`, `book_id`) |
 | May be queried by | exactly one of: (`firm_id`); (`firm_id`, `business_line_id`); (`firm_id`, `business_line_id`, `desk_id`); (`firm_id`, `business_line_id`, `desk_id`, `book_id`) |
 | Rule for combining | Never summed, averaged or rebuilt from other slices: only looked up at a level where it was computed. Each row names its scenario in the `scenario` column. |
 
@@ -102,6 +107,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | structured |
 | Answered from | `risk_metrics` |
+| Precomputed | in `risk_metrics` by `frtb_sa_by_org` at (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | May be queried by | exactly one of: (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | Rule for combining | Never summed, averaged or rebuilt from other slices: only looked up at a level where it was computed. |
 
@@ -114,6 +120,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | structured |
 | Answered from | `risk_metrics` |
+| Precomputed | in `risk_metrics` by `frtb_sbm_by_org` at (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | May be queried by | exactly one of: (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | Rule for combining | Never summed, averaged or rebuilt from other slices: only looked up at a level where it was computed. |
 
@@ -126,6 +133,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | structured |
 | Answered from | `risk_metrics` |
+| Precomputed | in `risk_metrics` by `frtb_drc_by_org` at (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | May be queried by | exactly one of: (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | Rule for combining | Never summed, averaged or rebuilt from other slices: only looked up at a level where it was computed. |
 
@@ -138,6 +146,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | structured |
 | Answered from | `risk_metrics` |
+| Precomputed | in `risk_metrics` by `frtb_rrao_by_org` at (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | May be queried by | exactly one of: (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | Rule for combining | Never summed, averaged or rebuilt from other slices: only looked up at a level where it was computed. |
 
@@ -150,6 +159,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | structured |
 | Answered from | `risk_metrics` |
+| Precomputed | in `risk_metrics` by `frtb_imcc_by_org` at (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | May be queried by | exactly one of: (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | Rule for combining | Never summed, averaged or rebuilt from other slices: only looked up at a level where it was computed. |
 
@@ -162,6 +172,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | structured |
 | Answered from | `risk_metrics` |
+| Precomputed | in `risk_metrics` by `frtb_imcc_unconstrained_by_org` at (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | May be queried by | exactly one of: (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | Rule for combining | Never summed, averaged or rebuilt from other slices: only looked up at a level where it was computed. |
 
@@ -174,6 +185,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | USD |
 | Aggregation class | structured |
 | Answered from | `risk_metrics` |
+| Precomputed | in `risk_metrics` by `frtb_imcc_constrained_sum_by_org` at (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | May be queried by | exactly one of: (`firm_id`); (`firm_id`, `business_line_id`, `desk_id`) |
 | Rule for combining | Never summed, averaged or rebuilt from other slices: only looked up at a level where it was computed. |
 
@@ -186,6 +198,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | ratio |
 | Aggregation class | structured |
 | Answered from | `risk_metrics` |
+| Precomputed | in `risk_metrics` by `ccar_start_cet1_ratio_by_entity` at (`firm_id`); (`firm_id`, `legal_entity`) |
 | May be queried by | exactly one of: (`firm_id`); (`firm_id`, `legal_entity`) |
 | Rule for combining | Never summed, averaged or rebuilt from other slices: only looked up at a level where it was computed. Not allocated to `business_line_id`, `desk_id`, `book_id`: a query naming one is refused. |
 
@@ -198,6 +211,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | ratio |
 | Aggregation class | structured |
 | Answered from | `risk_metrics` |
+| Precomputed | in `risk_metrics` by `ccar_min_cet1_ratio_by_entity` at (`firm_id`); (`firm_id`, `legal_entity`) |
 | May be queried by | exactly one of: (`firm_id`); (`firm_id`, `legal_entity`) |
 | Rule for combining | Never summed, averaged or rebuilt from other slices: only looked up at a level where it was computed. Not allocated to `business_line_id`, `desk_id`, `book_id`: a query naming one is refused. Each row names its scenario in the `scenario` column. |
 
@@ -210,6 +224,7 @@ A query for a slice the class does not allow is refused with the reason (HTTP 42
 | Unit | ratio |
 | Aggregation class | structured |
 | Answered from | `risk_metrics` |
+| Precomputed | in `risk_metrics` by `ccar_scb_by_entity` at (`firm_id`); (`firm_id`, `legal_entity`) |
 | May be queried by | exactly one of: (`firm_id`); (`firm_id`, `legal_entity`) |
 | Rule for combining | Never summed, averaged or rebuilt from other slices: only looked up at a level where it was computed. Not allocated to `business_line_id`, `desk_id`, `book_id`: a query naming one is refused. |
 
@@ -334,6 +349,12 @@ Reporting grain: `firm_id`, `business_line_id`, `desk_id`, `book_id`, `legal_ent
 One row per aggregation, measure and node of the official run. node_level names the node's grouping set (dimensions joined by |); a dimension the node does not group by holds *. Every measure here is looked up, never summed across rows.
 
 Measures stored in it: `var_99_1d`, `var_99_10d`, `es_975_1d`, `svar_99_1d`, `worst_stress_loss`, `frtb_sa_charge`, `frtb_sbm_charge`, `frtb_drc_charge`, `frtb_rrao_charge`, `frtb_imcc`, `frtb_imcc_unconstrained`, `frtb_imcc_constrained_sum`, `ccar_start_cet1_ratio`, `ccar_min_cet1_ratio`, `ccar_scb`.
+
+Derived rows stored in it (see below): `var_99_1d__sum_children`, `var_99_1d__diversification`, `var_99_1d__incremental`, `var_99_10d__sum_children`, `var_99_10d__diversification`, `var_99_10d__incremental`, `es_975_1d__sum_children`, `es_975_1d__diversification`, `es_975_1d__incremental`, `svar_99_1d__sum_children`, `svar_99_1d__diversification`, `svar_99_1d__incremental`.
+
+- `<measure>__sum_children`: At a parent node: the sum of the standalone values of its children at the next org level of the specification. The one deliberate sum of vector-measure values, shown beside the parent's own value; never a substitute for it.
+- `<measure>__diversification`: At a parent node: <measure>__sum_children minus the parent's own value, the diversification benefit. Never negative for ES (subadditive); it can be negative for VaR.
+- `<measure>__incremental`: At a child node: the parent's value minus the value of the parent's vector without this child, with the same function, level, window and horizon. Negative for a hedge; not the child's standalone value, and the children's incrementals do not add up to the parent.
 
 | Column | Type | Role | Nullable |
 |---|---|---|---|

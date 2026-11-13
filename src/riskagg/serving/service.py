@@ -21,7 +21,8 @@ import pandas as pd
 import pyarrow.dataset as ds
 
 from riskagg.context import DEFAULT_ROOT, official_runs
-from riskagg.semantic.model import SemanticModel, load_model
+from riskagg.engine.spec import AggregationSpec, load_specs, stored_by
+from riskagg.semantic.model import SemanticModel, derived_rows, load_model
 from riskagg.semantic.query import (
     Drilldown,
     Query,
@@ -68,8 +69,11 @@ def resolve_run(root: str | Path, as_of: datetime.date | str | None) -> tuple[da
     return as_of, runs[as_of]
 
 
-def catalog(model: SemanticModel) -> dict:
-    """Measures with the slices each can answer, dimensions, hierarchies and tables."""
+def catalog(model: SemanticModel, specs: Sequence[AggregationSpec] | None = None) -> dict:
+    """Measures with the slices each can answer and where each is precomputed (the shipped
+    specifications unless ``specs`` is given), the derived rows stored beside a vector
+    measure, dimensions, hierarchies and tables."""
+    specs = load_specs(None, model) if specs is None else specs
 
     def slices(m) -> dict:
         if m.measure_class == "structured":
@@ -86,9 +90,11 @@ def catalog(model: SemanticModel) -> dict:
                 "class": m.measure_class,
                 "params": m.params,
                 "group_by": slices(m),
+                "stored_in_risk_metrics": stored_by(specs, name),
             }
             for name, m in model.measures.items()
         },
+        "derived_rows": derived_rows(model),
         "dimensions": model.dimensions,
         "hierarchies": {k: list(v) for k, v in model.hierarchies.items()},
         "tables": sorted(model.tables),

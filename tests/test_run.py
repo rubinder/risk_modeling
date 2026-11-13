@@ -275,17 +275,21 @@ def _drop(measure, level):
     return change
 
 
+VECTOR_ROW_CORRUPTIONS = {
+    "desk": _bump("var_99_1d", DESK),
+    "desk_asset_class": _bump("var_99_1d", "desk_id|asset_class"),
+    "sum_children": _bump("var_99_1d__sum_children", "firm_id"),
+    "diversification": _bump("var_99_1d__diversification", "firm_id|business_line_id"),
+    "incremental": _bump("var_99_1d__incremental", BOOK),
+    "missing": _drop("var_99_1d", DESK),
+    "es_desk": _bump("es_975_1d", DESK),
+    "svar_incremental": _bump("svar_99_1d__incremental", BOOK),
+    "var_10d_firm": _bump("var_99_10d", "firm_id"),
+}
+
+
 @pytest.mark.parametrize(
-    "change",
-    [
-        _bump("var_99_1d", DESK),
-        _bump("var_99_1d", "desk_id|asset_class"),
-        _bump("var_99_1d__sum_children", "firm_id"),
-        _bump("var_99_1d__diversification", "firm_id|business_line_id"),
-        _bump("var_99_1d__incremental", BOOK),
-        _drop("var_99_1d", DESK),
-    ],
-    ids=["desk", "desk_asset_class", "sum_children", "diversification", "incremental", "missing"],
+    "change", list(VECTOR_ROW_CORRUPTIONS.values()), ids=list(VECTOR_ROW_CORRUPTIONS)
 )
 def test_reconcile_recomputes_every_stored_vector_measure(spark, official, tmp_path, change):
     ctx = _copy_run(official, tmp_path)

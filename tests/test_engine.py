@@ -139,7 +139,7 @@ def test_one_pass_for_shared_specs(spark, tiny_market):
     assert out.count() > 0
 
 
-def test_node_vectors_union_both_specs(tiny_market):
+def test_node_vectors_union_every_vector_spec(tiny_market):
     pnl, hierarchy, n = tiny_market
     model = load_model()
     specs = _vector_specs(model)
@@ -154,7 +154,7 @@ def test_node_vectors_union_both_specs(tiny_market):
     }
 
 
-def test_run_all_covers_both_shipped_specs(tiny_market):
+def test_run_all_covers_every_shipped_vector_spec(tiny_market):
     pnl, hierarchy, n = tiny_market
     model = load_model()
     out = run_all(_vector_specs(model), model, build_reporting_grain(pnl, hierarchy, n), n)
@@ -162,13 +162,24 @@ def test_run_all_covers_both_shipped_specs(tiny_market):
     rows = out.collect()
     assert {r.scenario for r in rows} == {"*"}
     by_spec = {(r.aggregation, r.measure) for r in rows}
+    org = {"var_by_org": "var_99_1d", "var_10d_by_org": "var_99_10d",
+           "es_by_org": "es_975_1d", "svar_by_org": "svar_99_1d"}  # fmt: skip
     assert by_spec == {
-        ("var_by_org", "var_99_1d"),
-        ("var_by_org", "var_99_1d__sum_children"),
-        ("var_by_org", "var_99_1d__diversification"),
-        ("var_by_org", "var_99_1d__incremental"),
+        *((spec, f"{m}{suffix}") for spec, m in org.items()
+          for suffix in ("", "__sum_children", "__diversification", "__incremental")),
         ("var_by_desk_asset_class", "var_99_1d"),
-    }
+    }  # fmt: skip
+    per_level = {}
+    for r in rows:
+        if r.aggregation in org and r.measure in org.values():
+            per_level.setdefault(r.measure, {}).setdefault(r.node_level, 0)
+            per_level[r.measure][r.node_level] += 1
+    # every org node, for each measure (the stressed window covers the same books in tiny)
+    assert len({tuple(sorted(v.items())) for v in per_level.values()}) == 1
+    assert set(per_level["es_975_1d"]) == {
+        "firm_id", "firm_id|business_line_id", "firm_id|business_line_id|desk_id",
+        "firm_id|business_line_id|desk_id|book_id",
+    }  # fmt: skip
     keys = [(r.aggregation, r.measure, r.node_level, *[r[d] for d in GRAIN_DIMS]) for r in rows]
     assert len(keys) == len(set(keys))
     firm_incremental = [

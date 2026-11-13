@@ -115,8 +115,9 @@ the parent either.
   `sum(pnl[i])` per scenario, no Python UDF). Exploding to one row per scenario would
   multiply the row count by 250 before the shuffle.
 - Trades are reduced once to a **reporting grain**: one vector per book × legal entity ×
-  region × asset class × currency × risk class × window (`build_reporting_grain` in
-  `engine/grain.py`). Every hierarchy node is built from that small result, not from
+  region × asset class × currency × risk class × liquidity horizon × reduced-set flag ×
+  window (`build_reporting_grain` in `engine/grain.py`; FRTB IMA needs the liquidity horizon
+  and the reduced-set flag, and VaR and ES sum over them). Every hierarchy node is built from that small result, not from
   trades.
 - All the nodes the specifications ask for are built in one grouping-sets pass
   (`aggregate_vectors`); only declared groupings are computed, never the full cube.
@@ -127,7 +128,11 @@ the parent either.
 
 **What this does to the OLAP layer** (`src/riskagg/semantic/`, `src/riskagg/serving/`):
 
-- `risk_metrics` holds VaR and ES only at the nodes the specifications computed.
+- `risk_metrics` holds VaR and ES only at the nodes the specifications computed. The
+  shipped ones store `var_99_1d`, `var_99_10d`, `es_975_1d` and `svar_99_1d` at the firm and
+  every business line, desk and book, each with its sum-of-children, diversification and
+  incremental rows (`<measure>__sum_children`, `__diversification`, `__incremental`), plus
+  `var_99_1d` by desk and asset class (`config/aggregations.yaml`).
 - `pnl_scenarios` holds the reporting-grain vectors exploded to one row per scenario. Within
   one scenario P&L is additive, so the query layer can answer VaR for any combination of the
   grain dimensions. The SQL only sums P&L per scenario (`GROUP BY <dims>, scenario_idx`).
@@ -147,8 +152,10 @@ the parent either.
 The `tiny` profile has 20 scenarios, 3 desks and 6 books. At these sizes the regulatory
 levels are degenerate: 99% VaR of 20 scenarios is just the worst loss. So the example uses
 **90% VaR**, where k = 20 × 0.10 = 2 and VaR is the **2nd-worst loss**, and **80% ES**, where
-k = 20 × 0.20 = 4 and ES is the **mean of the 4 worst losses**. The mechanics are exactly
-those of 99% VaR and 97.5% ES on 250 scenarios.
+k = 20 × 0.20 = 4 and ES is the **mean of the 4 worst losses**. The ranking, the averaging
+and the diversification rows are those of 99% VaR and 97.5% ES on 250 scenarios, with one
+difference: both k here are whole numbers, so the fractional weight that 97.5% ES on 250
+scenarios puts on its 7th-worst loss (k = 6.25) is not exercised.
 
 Desk DESK001 holds two books, BOOK0001 and BOOK0002. Their one-day P&L vectors (window
 `CURRENT`, summed over everything below the book) come from `riskagg generate --profile
@@ -243,9 +250,12 @@ BOOK0002's incremental VaR is 378,820 − 111,142 = **267,678**. The two increme
 (−55,610 + 267,678 = 212,068) do not add up to the desk's VaR either.
 
 In the engine these are the rows `var_90`, `var_90__sum_children`, `var_90__diversification`
-and `var_90__incremental` that `run_all` produces for the org hierarchy. The golden test
-builds them from the generated tiny data through `build_reporting_grain`, `node_vectors` and
-`run_all`, and checks every number above.
+and `var_90__incremental` that `run_all` produces for an org-hierarchy specification at these
+levels. The golden test declares that specification itself (no shipped one is at 90% or
+80%), builds the rows from the generated tiny data through `build_reporting_grain`,
+`node_vectors` and `run_all`, and checks every number above. The official run stores the same
+kinds of rows for the production measures (`es_975_1d__diversification`, for example), where
+the ES tail of 250 scenarios is fractional.
 
 ## 4. What this project simplifies compared with a real bank
 
