@@ -10,6 +10,7 @@ import math
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import numpy as np
 import yaml
@@ -51,18 +52,23 @@ def content_checksum(df: DataFrame) -> tuple[int, str]:
     return int(row["rows"]), str(row["checksum"] if row["checksum"] is not None else 0)
 
 
-def git_commit() -> str:
+def git_commit(cwd: Path = REPO_ROOT) -> str:
+    """Short commit of ``cwd``'s checkout, with ``-dirty`` when a tracked file has uncommitted
+    changes (untracked files do not count); ``unknown`` outside a git checkout."""
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
     try:
-        out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return out.stdout.strip() or "unknown"
+        commit = git("rev-parse", "--short", "HEAD")
+        dirty = git("status", "--porcelain", "--untracked-files=no")
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
+    if not commit:
+        return "unknown"
+    return f"{commit}-dirty" if dirty else commit
 
 
 def write_manifest(

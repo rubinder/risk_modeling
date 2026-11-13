@@ -399,3 +399,37 @@ def test_spec_hash_depends_on_reference_files(tmp_path):
     h1 = spec_hash(specs, [ref])
     ref.write_text("a,2\n")
     assert spec_hash(specs, [ref]) != h1
+
+
+def test_git_commit_marks_uncommitted_tracked_changes_dirty(tmp_path):
+    import subprocess
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+            cwd=tmp_path, check=True, capture_output=True,
+        )  # fmt: skip
+
+    git("init", "-q")
+    (tmp_path / "a.txt").write_text("1\n")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "one")
+    clean = audit.git_commit(tmp_path)
+    assert re.fullmatch(r"[0-9a-f]{7,}", clean)
+    (tmp_path / "untracked.txt").write_text("x\n")
+    assert audit.git_commit(tmp_path) == clean  # untracked files do not count
+    (tmp_path / "a.txt").write_text("2\n")
+    assert audit.git_commit(tmp_path) == f"{clean}-dirty"
+    assert audit.git_commit(tmp_path / "not-a-repo") == "unknown"
+
+
+def test_default_session_has_no_ui_and_the_bench_session_keeps_it_on_loopback():
+    from riskagg.spark import session_builder
+
+    default = session_builder()._options
+    assert default["spark.ui.enabled"] == "false"
+    bench = session_builder(
+        "b", spark__ui__enabled="true", spark__driver__bindAddress="127.0.0.1"
+    )._options
+    assert bench["spark.ui.enabled"] == "true"
+    assert bench["spark.driver.bindAddress"] == "127.0.0.1"

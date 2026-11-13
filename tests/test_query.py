@@ -269,6 +269,20 @@ def test_pinot_executor_posts_sql_and_builds_frame(model):
     assert finish(q, df)["value"][0] == pytest.approx(1.5)
 
 
+def test_pinot_executor_raises_pinot_error_without_a_result_table(model):
+    """A 200 with no resultTable (and no exceptions) is a Pinot error, not a KeyError."""
+
+    def handler(request):
+        return httpx.Response(200, json={"numDocsScanned": 0})
+
+    q = build_query(model, "var_99_1d", ["desk_id"], {}, D, R)
+    with pytest.raises(PinotError, match="resultTable"):
+        _pinot(handler).execute(q)
+    drill = build_drilldown(model, "risk_metrics", {}, D, R, 10)
+    with pytest.raises(PinotError, match="resultTable"):
+        _pinot(handler).fetch(drill)
+
+
 def test_pinot_executor_raises_on_exceptions(model):
     def handler(request):
         return httpx.Response(200, json={"exceptions": [{"errorCode": 150, "message": "bad sql"}]})

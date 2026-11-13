@@ -78,6 +78,7 @@ def load_specs(path: str | Path | None, model: SemanticModel) -> list[Aggregatio
     raw = yaml.safe_load(aggregations_path(path).read_text()) or []
     specs: list[AggregationSpec] = []
     seen: set[str] = set()
+    nodes: dict[tuple[str, frozenset[str]], str] = {}  # (measure, node dims) -> spec name
     for r in raw:
         name = r["name"]
         if name in seen:
@@ -95,6 +96,13 @@ def load_specs(path: str | Path | None, model: SemanticModel) -> list[Aggregatio
             diversification=bool(r.get("diversification", False)),
         )
         _validate(spec, model)
+        for gs in spec.grouping_sets:
+            owner = nodes.setdefault((spec.measure, frozenset(gs)), spec.name)
+            if owner != spec.name:
+                raise SpecError(
+                    f"spec '{name}': measure '{spec.measure}' at node {list(gs)} is already "
+                    f"produced by spec '{owner}'; risk_metrics holds one row per measure and node"
+                )
         specs.append(spec)
     return specs
 

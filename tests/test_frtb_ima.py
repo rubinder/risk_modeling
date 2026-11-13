@@ -1,3 +1,4 @@
+import logging
 import math
 import shutil
 
@@ -185,15 +186,21 @@ def test_tiny_matches_numpy_reference(tiny, node_cols):
     es.unpersist()
 
 
-def test_no_stressed_window_gives_no_rows(spark, tiny):
-    """Without a stressed window (the bench profile) IMA is not computed, never reported as 0."""
+def test_no_stressed_window_gives_no_rows(spark, tiny, caplog):
+    """Without a stressed window (the bench profile) IMA is not computed, never reported as 0,
+    and the run says so in a warning."""
     grain = tiny[0].where("window = 'CURRENT'")
     model = load_model()
     specs = {s.name: s for s in load_specs(None, model)}
     inputs = RunInputs(grain=grain, n_scenarios=tiny[3])
     try:
-        rows = MEASURE_REGISTRY["frtb_imcc"](specs["frtb_imcc_by_org"], model, inputs)
-        assert rows.count() == 0
+        with caplog.at_level(logging.WARNING, logger="riskagg.measures.frtb_ima"):
+            rows = MEASURE_REGISTRY["frtb_imcc"](specs["frtb_imcc_by_org"], model, inputs)
+            assert rows.count() == 0
+        assert any(
+            r.levelno == logging.WARNING and "no STRESSED window" in r.getMessage()
+            for r in caplog.records
+        ), caplog.text
     finally:
         inputs.release()
 

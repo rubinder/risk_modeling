@@ -81,6 +81,8 @@ class PinotExecutor:
         for flag in ("numGroupsLimitReached", "partialResult"):
             if body.get(flag):
                 raise PinotError(f"Pinot result is incomplete ({flag} is true)")
+        if "resultTable" not in body:
+            raise PinotError(f"Pinot answered without a resultTable: {sorted(body)}")
         return body["resultTable"]
 
     def execute(self, query: Query) -> pd.DataFrame:

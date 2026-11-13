@@ -25,6 +25,7 @@ multiplier (MAR33.41-33.42), PLA tests and backtesting (MAR32) and desk eligibil
 """
 
 import itertools
+import logging
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -44,6 +45,8 @@ from riskagg.engine.vectors import (
     unique_sets,
 )
 from riskagg.semantic.model import SemanticModel, SpecError
+
+log = logging.getLogger(__name__)
 
 LEVEL = 0.975  # MAR33.3
 LIQUIDITY_HORIZONS = (10, 20, 40, 60, 120)  # MAR33.4 Table 1
@@ -232,6 +235,10 @@ def build_ima_level(inputs: RunInputs, node_cols: list[str]) -> ImaLevel:
         raise ValueError("FRTB IMA measures need the run's grain and n_scenarios")
     grain = inputs.grain
     if grain.where(F.col("window") == STRESSED).limit(1).count() == 0:
+        log.warning(
+            "FRTB IMA: the reporting grain has no %s window, so no IMCC is reported at %s",
+            STRESSED, node_cols,
+        )  # fmt: skip
         grain = grain.where(F.lit(False))
     detail = ima_es(grain, node_cols, inputs.n_scenarios).cache()
     charge = imcc(detail).cache()

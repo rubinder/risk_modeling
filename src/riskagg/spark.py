@@ -8,13 +8,21 @@ SESSION_CONF: dict[str, str] = {
     "spark.sql.adaptive.enabled": "true",
     "spark.sql.shuffle.partitions": "8",
     "spark.sql.session.timeZone": "UTC",
+    # The UI would listen on every interface; `generate` and `run` do not need it. The
+    # benchmark turns it back on, bound to loopback (`bench_session`).
+    "spark.ui.enabled": "false",
 }
 
 
-def get_spark(app_name: str = "riskagg", **conf: str) -> SparkSession:
+def session_builder(app_name: str = "riskagg", **conf: str) -> SparkSession.Builder:
+    """``SESSION_CONF``, then ``conf`` (``__`` in a key stands for ``.``), which overrides it."""
     builder = SparkSession.builder.master("local[*]").appName(app_name)
     for key, value in SESSION_CONF.items():
         builder = builder.config(key, value)
     for key, value in conf.items():
         builder = builder.config(key.replace("__", "."), str(value))
-    return builder.getOrCreate()
+    return builder
+
+
+def get_spark(app_name: str = "riskagg", **conf: str) -> SparkSession:
+    return session_builder(app_name, **conf).getOrCreate()

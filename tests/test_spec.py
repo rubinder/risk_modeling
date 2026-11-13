@@ -135,3 +135,33 @@ def test_filter_list_of_strings_accepted(tmp_path):
         " filters: {desk_id: ['D1', 'NO']}}"
     )
     assert _specs(tmp_path, body)[0].filters == {"desk_id": ("D1", "NO")}
+
+
+def test_two_specs_producing_the_same_measure_and_node_are_rejected(tmp_path):
+    """risk_metrics has one row per (measure, node); a second spec there is an error up front."""
+    with pytest.raises(SpecError, match=r"spec 'b'.*var_99_1d.*\['firm_id'\].*already.*'a'"):
+        _specs(
+            tmp_path,
+            """
+            - {name: a, measure: var_99_1d, grouping_sets: [[firm_id], [desk_id]]}
+            - {name: b, measure: var_99_1d, grouping_sets: [[firm_id]], filters: {desk_id: [D1]}}
+            """,
+        )
+    # the same dimensions in another order are the same node
+    with pytest.raises(SpecError, match="already"):
+        _specs(
+            tmp_path,
+            """
+            - {name: a, measure: var_99_1d, grouping_sets: [[desk_id, asset_class]]}
+            - {name: b, measure: var_99_1d, grouping_sets: [[asset_class, desk_id]]}
+            """,
+        )
+    # a different measure at the same node, or one set listed twice in one spec, is fine
+    ok = _specs(
+        tmp_path,
+        """
+        - {name: a, measure: var_99_1d, grouping_sets: [[firm_id], [firm_id]]}
+        - {name: b, measure: es_975_1d, grouping_sets: [[firm_id]]}
+        """,
+    )
+    assert [s.name for s in ok] == ["a", "b"]
