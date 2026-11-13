@@ -191,6 +191,7 @@ MARKER_PAGES: list[tuple[str, str, str, str]] = [
     ("src/riskagg/data/market.py", "one common factor per risk class", "01-var-es.md", "Factor model"),
     ("src/riskagg/data/market.py", "the stressed window is", "01-var-es.md", "Stressed window"),
     ("src/riskagg/data/market.py", "scenario P&L is linear", "01-var-es.md", "Linear P&L"),
+    ("src/riskagg/data/market.py", "every book draws", "01-var-es.md", "Books are alike"),
     ("src/riskagg/data/market.py", "curvature uses a symmetric", "04-frtb.md", "Curvature up equals"),
     ("src/riskagg/engine/audit.py", "assumes the firm rows come", "04-frtb.md", "IMA reconciliation"),
     ("src/riskagg/measures/stress.py", "scenarios are hypothetical", "02-stress.md", "Hypothetical"),

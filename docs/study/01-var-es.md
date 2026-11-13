@@ -102,6 +102,26 @@ otherwise. Each book's 2nd-worst loss is 0, so each VaR is 0. The combined book 
 in two scenarios, so its VaR is 100, more than 0 + 0. At 80% ES (the mean of the 4 worst
 losses) each book has ES 25 and the combined book 50, which does not exceed 25 + 25.
 
+**Diversification on the demo profile is almost nil, and that is the data, not the
+engine.** On the `demo` profile (seed 42) the firm's stressed 99% VaR, 21.07 billion, equals
+the sum of its four business lines' stressed VaRs, 21.07 billion, to within float noise (a
+benefit of 0.00%); in the current window the benefit is 0.34% of the sum (firm 6.04 billion,
+business lines 6.06 billion). The cause is in the generator. Every book draws its trades from
+the same mix of asset classes and currencies over the same 54 risk factors, with 70% of trades
+long (`make_trades` in `src/riskagg/data/org.py`, `LONG_SHARE` in
+`src/riskagg/data/market.py`), and holds about 500 trades. So books are net long in 84% of
+(book, risk factor) pairs, with a median net exposure of 44% of gross, and
+every business line's P&L vector is close to a scaled copy of the firm's (correlation above
+0.999). Their losses are **comonotonic**: the same scenario is the ranked loss for every
+child. In the stressed window scenario 64 is the third-worst loss (the 99% VaR of 250
+scenarios) of the firm and of all four business lines, and when the same scenario is the
+ranked loss of every child, VaR adds exactly. In the current window the firm's third-worst is
+scenario 84, as for three business lines, but BL01's is scenario 78; that one difference is
+the whole benefit. A real bank's desks hold different and often offsetting positions (a desk
+hedging another, market makers both long and short), so the benefit between desks is usually
+a substantial share of their summed VaR. The tiny example in section 3, whose books offset
+each other, shows that case. Pinned by `tests/golden/test_demo_diversification.py`.
+
 **Incremental VaR** of a child is the parent's VaR minus the parent's VaR without that
 child: `VaR(parent) − VaR(parent vector − child vector)`. It answers "how much does this
 book add to the desk's risk?". It is not the child's standalone VaR, and it is negative when
@@ -275,6 +295,11 @@ Marked `SIMPLIFICATION:` in the code:
 - **Linear P&L.** Scenario P&L is linear in the factor returns (exposure × return), not a
   full revaluation of each trade under each historical scenario
   (`make_pnl_vectors` in `src/riskagg/data/market.py`). Options in a bank are repriced.
+- **Books are alike.** Every book draws its trades from the same mix of asset classes,
+  currencies and risk factors, mostly long, so on the `demo` profile books, desks and
+  business lines are nearly comonotonic and the diversification benefit between them is about
+  zero (section 2). Real desks have mandates and hedge each other
+  (`LONG_SHARE` in `src/riskagg/data/market.py`, `make_trades` in `src/riskagg/data/org.py`).
 
 Also different from a bank, by the project's scope:
 

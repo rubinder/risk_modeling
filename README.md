@@ -306,7 +306,8 @@ In summary (details and paragraph references on the pages):
 
 - [VaR and ES](docs/study/01-var-es.md#4-what-this-project-simplifies-compared-with-a-real-bank):
   square-root-of-time scaling for multi-day horizons; a one-factor-per-class market model;
-  a synthetic stressed window; scenario P&L linear in factor returns.
+  a synthetic stressed window; scenario P&L linear in factor returns; books alike and mostly
+  long, so the demo shows almost no diversification.
 - [Stress testing](docs/study/02-stress.md#4-what-this-project-simplifies-compared-with-a-real-bank):
   sensitivity-based (delta, gamma, vega) P&L instead of full revaluation; hand-set,
   uncalibrated scenarios; instantaneous shocks.
@@ -329,7 +330,10 @@ In summary (details and paragraph references on the pages):
 
 - One machine, Spark local mode. Nothing here was run on a cluster, and no claim is made
   about cluster-scale performance.
-- Synthetic, seeded data: 20 trades (`tiny`), 100,000 (`demo`, `bench`).
+- Synthetic, seeded data: 20 trades (`tiny`), 100,000 (`demo`, `bench`). Every book draws
+  from the same mostly-long mix of trades, so on `demo` the diversification benefit between
+  business lines is about zero (stressed VaR adds exactly); real desks offset each other. See
+  [01 section 2](docs/study/01-var-es.md#2-how-the-measures-aggregate-and-why).
 - Pinot is a single quick-start container without authentication, bound to loopback.
 - The API has no authentication or authorisation, and there is no UI.
 - Every run recomputes from raw data; there is no incremental processing.

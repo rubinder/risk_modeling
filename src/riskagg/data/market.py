@@ -23,6 +23,9 @@ CLASS_CORRELATION = {"CURRENT": 0.5, "STRESSED": 0.8}
 VOL_MULTIPLIER = {"CURRENT": 1.0, "STRESSED": 3.0}
 MARKET_WEIGHT = 0.3  # share of a class factor's variance that is market-wide
 OPTION_SHARE = 0.3
+# SIMPLIFICATION: every book draws its trades from the same mix of asset classes, currencies and
+# factors, 70% long (direction and book are drawn independently), so books, desks and business
+# lines are nearly comonotonic and diversification between them is about zero on `demo`.
 LONG_SHARE = 0.7
 VEGA_SCALE = 0.05
 # SIMPLIFICATION: curvature uses a symmetric quadratic repricing at one shock per risk class
