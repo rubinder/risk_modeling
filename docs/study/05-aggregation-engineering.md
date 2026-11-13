@@ -4,8 +4,9 @@ This page covers the engineering of the aggregation engine rather than a risk me
 reporting grain, declared grouping sets against a full cube, why P&L vectors stay as arrays,
 how non-additive measures constrain the OLAP layer, how every number is made auditable, and
 what a benchmark of naive against tuned variants measured on one machine. Every number in
-section 6 is copied from the generated report `docs/benchmarks/report.md`, and
-`tests/test_bench.py` checks that each of them appears there. Statements labelled
+sections 6 and 7 is copied from the generated report `docs/benchmarks/report.md`, and
+`tests/test_bench.py` checks that each of them appears there (and that the key figures sit
+next to the right variant). Statements labelled
 **reasoning** are not measurements.
 
 ## 1. The problem in Spark terms
@@ -22,9 +23,11 @@ Three facts shape everything below:
    its children's VaRs, in Spark or anywhere else.
 2. **P&L in one scenario is additive.** So vectors can be summed in any order and any
    grouping, which is what makes a shared intermediate result possible.
-3. **The cost of a Spark aggregation is mostly what crosses a shuffle**: how many rows and
+3. **Much of the cost of a Spark aggregation is what crosses a shuffle**: how many rows and
    how many bytes go through an `Exchange`, and whether a map-side partial aggregate shrinks
-   them first. The work inside a task (adding doubles) is cheap by comparison.
+   them first. It is not the only cost: how often the input is scanned matters too, and in
+   the `rollup` comparison of section 6 the variant that shuffled more bytes but scanned
+   once was the faster one.
 
 ## 2. The reporting grain
 
@@ -59,8 +62,9 @@ book, so the grain is a deliberate choice, declared once in `config/semantic_mod
 **Grouping sets.** `GROUP BY GROUPING SETS ((firm), (firm, bl), (firm, bl, desk), ...)`
 computes several groupings in one aggregation. Spark plans it as an `Expand` (each input row
 is emitted once per grouping set, with the columns not in that set nulled and a
-`spark_grouping_id` added) followed by one `HashAggregate` on the expanded keys, so the whole
-thing is one scan and one shuffle.
+`spark_grouping_id` added) followed by one aggregation on the expanded keys (a partial
+`HashAggregate`, an `Exchange`, a final `HashAggregate`), so all the groupings share one
+scan of their input and one shuffle.
 
 **Code.** `aggregate_vectors` in `src/riskagg/engine/vectors.py` takes the union of the
 grouping sets of all vector specifications that share the same filters (`node_vectors` in
@@ -94,14 +98,21 @@ sums above it. Each aggregation buffer is 250 fixed-width doubles, so it fits Sp
 sends one row per group per task across the shuffle. The row count never multiplies by the
 scenario count. Those two things are the win.
 
-**Whole-stage code generation is off for this aggregate.** In the report's executed plans the
-250-sum `HashAggregate`s carry no `*` (the whole-stage codegen marker), while the
-`BroadcastHashJoin` below them does. The cause is `spark.sql.codegen.maxFields` (default 100 in
-Spark 4.3.0): whole-stage codegen is not used for an operator whose schema has more fields than
-that. A check on this Spark version with AQE off: a `groupBy` with 99 element sums is planned as
-`*(1) HashAggregate`, with 100 or 250 sums as plain `HashAggregate`, and with 250 sums and
-`spark.sql.codegen.maxFields=1000` as `*(1) HashAggregate` again. Raising the limit was not
-benchmarked, so whether it would make the aggregate faster is not known here.
+**Whole-stage code generation depends on the aggregate's shape.** Where the 250-sum aggregate
+is split into a partial and a final `HashAggregate` across an `Exchange`, which is the shape
+of the engine's grain aggregation, neither of the two carries `*` (the whole-stage codegen
+marker) in the report's executed plans, while the `BroadcastHashJoin` below them does. That
+is consistent with `spark.sql.codegen.maxFields` (default 100 in Spark 4.3.0): the
+intermediate schema between partial and final holds the 250 buffer fields, more than the
+limit. Where the aggregate runs as one complete-mode `HashAggregate` with no partial stage,
+it is `* HashAggregate`, with the marker: above a sort-merge join that already partitions
+the data (`skew_join_plain`, `sort_merge`, with only a `Project` between) and above the
+`Exchange` AQE inserted in `skew_join_aqe_skew_join`. A check on this Spark version with AQE off, of the split shape only: a
+`groupBy` with 99 element sums is planned as `*(1) HashAggregate` partial and final, with 100
+or 250 sums as plain `HashAggregate`, and with 250 sums and `spark.sql.codegen.maxFields=1000`
+as `*(1) HashAggregate` again. The complete-mode shape was not tested at other sizes, and
+raising the limit was not benchmarked, so whether it would make the split aggregate faster is
+not known here.
 
 **The alternatives a competent engineer might reach for:**
 
@@ -120,8 +131,9 @@ benchmarked, so whether it would make the aggregate faster is not known here.
   map.
 
 **Its costs (reasoning).** The plan, its description and the per-row work all grow linearly
-with the scenario count, and above `spark.sql.codegen.maxFields` the aggregate runs without
-whole-stage code generation. At several thousand scenarios, an `Aggregator` or a chunked
+with the scenario count, and once the partial aggregate's buffer has more fields than
+`spark.sql.codegen.maxFields`, the split aggregate runs without whole-stage code
+generation. At several thousand scenarios, an `Aggregator` or a chunked
 layout (several array columns of a few hundred elements) becomes worth evaluating; both
 would need measuring.
 
@@ -159,8 +171,8 @@ memory come from Spark's REST status API; the executed plan is the adaptive fina
 machine was an Apple M3 with 8 cores in local mode, Spark 4.3.0 on Java 17.0.19. All of this
 is in the report's header, with the exact endpoints and fields.
 
-Two of the variants run the identical query to the identical executed plan, so their
-difference is pure noise: `skew_agg_plain` and `skew_agg_aqe_skew_join` came out at 0.68 and
+Some variants run the identical query to the identical executed plan, so their differences
+are pure noise: `skew_agg_plain` and `skew_agg_aqe_skew_join` came out at 0.68 and
 0.62 s, and the engine's grain query measured three times under three names
 (`array_index_sum`, `broadcast`, `sized_to_data`) at 0.96, 0.93 and 0.92 s. Differences of
 that order are not findings, and the report says so wherever a difference is smaller than
@@ -205,9 +217,9 @@ one grouping-sets aggregation.
 **Plan.** The per-level plan has `Union` over four branches, each with its own
 `Scan parquet pnl_vectors`, `BroadcastHashJoin` and `HashAggregate` / `Exchange` /
 `HashAggregate`. Three branches have their own `BroadcastExchange` of the hierarchy and the
-fourth reuses one (`ReusedExchange`). The engine's
-plan scans once, aggregates to the grain, then `Expand` feeds one aggregate keyed by
-`spark_grouping_id`.
+fourth reuses one (`ReusedExchange`). The engine's plan scans once, aggregates to the grain
+(`HashAggregate` / `Exchange` / `HashAggregate`), then `Expand` feeds one more aggregation
+(`HashAggregate` / `Exchange` keyed by `spark_grouping_id` / `HashAggregate`).
 
 **Measured.** 5.00 s against 1.85 s, 2.70× faster for the engine. Per-level reads the trade
 vectors 4 times and shuffles only 3.5 MiB (each branch partially aggregates to very few
@@ -238,10 +250,10 @@ per desk, so the oversized desk never reached a reducer as raw rows. Salting rai
 **At production scale (reasoning).** The same holds on a cluster for any aggregate that can
 be partially combined (sums, counts, element-wise vector sums): skew in the grouping key
 does not create a straggler. Salting an aggregate pays when the partial aggregate does not
-shrink the hot key: `collect_list` and exact distinct counts do run a partial aggregate
-below the `Exchange` (the `vector_sum` plan shows `ObjectHashAggregate` on both sides of it),
-but their buffer grows with the input, so the hot key's data crosses the shuffle almost
-undiminished. The same applies when partial aggregation is switched off.
+shrink the hot key: `collect_list` does run a partial aggregate below the `Exchange` (the
+`vector_sum` plan shows `ObjectHashAggregate` on both sides of it), but its buffer grows with
+the input, so the hot key's data crosses the shuffle almost undiminished. The same applies
+when partial aggregation is switched off.
 
 ### `skew_join`: key skew in a sort-merge join
 
@@ -250,8 +262,8 @@ disabled), then summed by desk: plain (session defaults), AQE skew join forced o
 salted (16 salt values on the vector side, the desk table replicated once per salt, then a
 two-stage sum).
 
-**Plan.** Plain: `SortMergeJoin` with the `HashAggregate` directly on top and no `Exchange`
-between them, because the join's `hashpartitioning(desk_id, 8)` already satisfies the
+**Plan.** Plain: `SortMergeJoin` with the `HashAggregate` on top, only a `Project` and no
+`Exchange` between them, because the join's `hashpartitioning(desk_id, 8)` already satisfies the
 aggregate. With forcing, the final plan has `SortMergeJoin(skew=true)` over an
 `AQEShuffleRead, coalesced and skewed`, and AQE inserted an
 `Exchange hashpartitioning(desk_id, desk_name, 8)` above the join with a single
@@ -329,19 +341,19 @@ about **plans and bytes**, which do transfer, more than about **seconds**, which
   measured; whether a task spills on a cluster depends on the executor's memory and cores,
   which local mode does not have.
 - **Skew transfers only in shape.** The oversized desk holds 40% of the trades, but with 40
-  desks hashed into 8 partitions on 8 local cores, the hot partition is one of only a handful
+  desks hashed into 8 shuffle partitions (then coalesced by AQE) on 8 local cores, the hot partition is one of only a handful
   and every task reads from local disk. On a cluster with hundreds of partitions, one task
   holding 40% of the data would run for most of the stage while the others idle (reasoning).
 - **Per-task costs may not transfer.** With 200 partitions the run had 216 tasks against 24
   and took several times longer; the cost per extra task was not isolated (hypothesis: a
   fixed setup cost per task, large relative to the little data each reduce task gets here).
-- **The data is smaller than designed** (see the simplifications below). Ratios between variants that are bound
-  by rows or bytes (the vector sum, the sort-merge join) should hold or widen with size;
-  anything bound by fixed per-task or per-query costs shrinks relative to the work
-  (reasoning).
-- **One machine, one run of the benchmark.** Run-to-run spread is reported, and two variants
-  that execute the identical plan are reported as a noise control; a difference smaller than
-  either is not a finding.
+- **The data is smaller than designed** (see the simplifications below). Ratios between
+  variants that are bound by rows or bytes (the vector sum, the sort-merge join) should hold
+  or widen with size; anything bound by fixed per-task or per-query costs shrinks relative
+  to the work (reasoning).
+- **One machine, one run of the benchmark.** Run-to-run spread is reported, and variants
+  that execute the identical plan are reported as noise controls; a difference smaller than
+  the spread, or than the gap between those controls, is not a finding.
 
 ## 8. Auditability
 
@@ -385,13 +397,15 @@ Every number a user sees can be traced to a run, a configuration and its inputs:
 
 1. **How do you sum arrays element-wise in Spark without a UDF?** `array(sum(col[0]), ...,
    sum(col[n-1]))`: native aggregates over array elements, fixed-width buffers in the
-   `UnsafeRow` hash map, and map-side partial aggregation. With 250 elements the aggregate
-   exceeds `spark.sql.codegen.maxFields` (100), so it runs without whole-stage code
-   generation. Code: `sum_vectors` in `src/riskagg/engine/vectors.py`; measured against
+   `UnsafeRow` hash map, and map-side partial aggregation. With 250 elements the split
+   partial/final aggregate exceeds `spark.sql.codegen.maxFields` (100) and runs without
+   whole-stage code generation; a complete-mode aggregate above a sort-merge join kept it in
+   the benchmark's plans. Code: `sum_vectors` in `src/riskagg/engine/vectors.py`; measured against
    explode-and-regroup in `vector_sum`.
 2. **Why not explode to one row per scenario?** The row count is multiplied by the scenario
    count before the first shuffle, and putting the array back together needs a
-   `collect_list`, which runs as an `ObjectHashAggregate` and a sort. Code:
+   `collect_list`; the plan shows `ObjectHashAggregate` on both sides of the second
+   `Exchange` (the `sort_array` is an expression, and the plan has no `Sort` operator). Code:
    `explode_regroup` in `src/riskagg/bench/variants.py`.
 3. **What is a reporting grain and why build one?** The finest level any report needs, built
    once from trades and cached; every node is built from it. Code: `build_reporting_grain` in
@@ -408,7 +422,7 @@ Every number a user sees can be traced to a run, a configuration and its inputs:
    the data can never be mistaken for "all". Code: `aggregate_vectors`.
 6. **When does key skew hurt, and when does it not?** It hurts where whole rows of the hot key
    reach one task: a sort-merge join, a window, an aggregate whose partial buffer grows with
-   its input (`collect_list`, exact distinct). It does not hurt a hash aggregate with a
+   its input (`collect_list`). It does not hurt a hash aggregate with a
    fixed-size partial buffer, because each map task sends one row per key. Measured in
    `skew_aggregate` and `skew_join`.
 7. **What does AQE's skew-join handling do, and what can go wrong?** It splits an oversized
@@ -416,7 +430,7 @@ Every number a user sees can be traced to a run, a configuration and its inputs:
    By default it will not do so if the split would need an extra shuffle; forcing it
    (`spark.sql.adaptive.forceOptimizeSkewedJoin`) here added a shuffle of whole vectors after
    the join, because the aggregate above it had no partial stage. Measured in `skew_join`.
-8. **How does salting work and what does it cost?** Add a random salt to the hot side's key,
+8. **How does salting work and what does it cost?** Add a salt (here a hash of the trade id modulo 16) to the hot side's key,
    replicate the other side once per salt, aggregate by (key, salt), then by key. It spreads
    the hot key over many tasks at the price of a replicated build side, more shuffle records
    and a second aggregation. Code: `skew_join_salted` and `skew_agg_salted`.
