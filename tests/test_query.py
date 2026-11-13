@@ -315,6 +315,8 @@ def test_schema_generated_from_model(model):
             for f in schema.get(key, [])
         ]
         assert sorted(fields) == sorted(spec["columns"])
+        for col in ("run_id", "spec_hash"):  # every table carries the run and spec hash
+            assert {"name": col, "dataType": "STRING"} in schema["dimensionFieldSpecs"], table
         (time,) = schema["dateTimeFieldSpecs"]
         assert time == {
             "name": "as_of_date", "dataType": "STRING",
