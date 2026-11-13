@@ -1,0 +1,44 @@
+"""Curated outputs: ``risk_metrics`` and ``pnl_scenarios``, partitioned by as-of date and run.
+
+Both are written with ``as_of_date`` and ``run_id`` as partition directories, and dynamic
+partition overwrite, so a re-run never touches another run's partition. Reading the table
+root exposes both partition keys as columns.
+"""
+
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+
+from riskagg.context import RunContext
+from riskagg.engine.vectors import GRAIN_DIMS, sum_vectors
+from riskagg.semantic.model import load_model
+
+PARTITION_COLS = ["as_of_date", "run_id"]
+
+
+def _write(df: DataFrame, ctx: RunContext, table: str) -> None:
+    df = df.withColumn("as_of_date", F.lit(ctx.as_of_date.isoformat()).cast("date")).withColumn(
+        "run_id", F.lit(ctx.run_id)
+    )
+    (
+        df.write.mode("overwrite")
+        .option("partitionOverwriteMode", "dynamic")
+        .partitionBy(*PARTITION_COLS)
+        .parquet(str(ctx.curated_root(table)))
+    )
+
+
+def write_risk_metrics(df: DataFrame, ctx: RunContext) -> None:
+    """``df`` in ``METRIC_COLUMNS``, plus ``as_of_date``, ``run_id`` and ``spec_hash``."""
+    _write(df.withColumn("spec_hash", F.lit(ctx.spec_hash)), ctx, "risk_metrics")
+
+
+def write_pnl_scenarios(grain: DataFrame, ctx: RunContext, n_scenarios: int) -> None:
+    """The grain summed over ``liquidity_horizon`` and ``in_reduced_set``, one row per scenario."""
+    summed = grain.groupBy(*GRAIN_DIMS, "window").agg(sum_vectors("pnl", n_scenarios).alias("pnl"))
+    exploded = summed.select(
+        *GRAIN_DIMS, "window", F.posexplode("pnl").alias("scenario_idx", "pnl")
+    )
+    columns = [
+        c for c in load_model().tables["pnl_scenarios"]["columns"] if c not in PARTITION_COLS
+    ]
+    _write(exploded.select(*columns), ctx, "pnl_scenarios")
